@@ -835,6 +835,50 @@ table.tbl tr:last-child td {
   color: var(--primary);
 }
 
+/* ============================================================
+   Catalog / inventory (MP-17)
+   ============================================================ */
+.inv-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.scope-note {
+  color: var(--muted);
+  font-size: 13px;
+  margin: -4px 0 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.scope-note svg {
+  width: 15px;
+  height: 15px;
+  color: var(--primary);
+  flex: none;
+}
+.it-name {
+  font-weight: 500;
+}
+.it-attr {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+/* Two-column field grid for the item editor; collapses on a narrow drawer. */
+.attr-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+@media (max-width: 540px) {
+  .attr-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* avatar text */
 .avatar {
   width: 34px;
