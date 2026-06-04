@@ -13,6 +13,7 @@ import {
   type ShadeInput,
 } from "@/lib/catalog";
 import { getCurrentProfile } from "@/lib/dal";
+import { parseRestockInput, type RestockInput } from "@/lib/stock";
 import { createClient } from "@/lib/supabase/server";
 
 export type ItemFormState =
@@ -167,5 +168,53 @@ export async function saveProduct(
     message: id
       ? `“${parsed.value.name}” updated`
       : `“${parsed.value.name}” added with ${count} ${shadeNoun}`,
+  };
+}
+
+/**
+ * Record a Restock — N units in for an Item at a chosen Shop, with an optional
+ * logged reason. Owner-only: gated here with {@link assertCan} for an early
+ * reject and again by is_owner() inside the SECURITY DEFINER `record_restock`
+ * RPC, the sole write path. The first Restock of an Item at a Shop creates its
+ * shop_stock row — the Shop begins **carrying** the Item — and the RPC raises
+ * the denormalized quantity and appends the ledger movement in one transaction
+ * (ADR-0004/0005). Input is validated by {@link parseRestockInput}; the amount
+ * is sent as the RPC's positive `p_amount`. Bound to the restock modal via
+ * `useActionState`.
+ */
+export async function recordRestock(
+  _prev: ItemFormState,
+  formData: FormData,
+): Promise<ItemFormState> {
+  const profile = await getCurrentProfile();
+  assertCan(profile, "stock:restock");
+
+  const input: RestockInput = {
+    itemId: String(formData.get("item_id") ?? ""),
+    shopId: String(formData.get("shop_id") ?? ""),
+    amount: String(formData.get("amount") ?? ""),
+    note: String(formData.get("note") ?? ""),
+  };
+
+  const parsed = parseRestockInput(input);
+  if (!parsed.ok) {
+    return { status: "error", message: parsed.error };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("record_restock", {
+    p_item_id: parsed.value.itemId,
+    p_shop_id: parsed.value.shopId,
+    p_amount: parsed.value.amount,
+    p_note: parsed.value.note,
+  });
+  if (error) return { status: "error", message: error.message };
+
+  revalidatePath("/inventory");
+
+  const { amount } = parsed.value;
+  return {
+    status: "success",
+    message: `Stock updated — ${amount} ${amount === 1 ? "unit" : "units"} in`,
   };
 }

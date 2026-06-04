@@ -14,7 +14,7 @@ import {
 } from "@/lib/catalog";
 import { format } from "@/lib/money";
 
-import { saveItem, saveProduct, type ItemFormState } from "./actions";
+import { recordRestock, saveItem, saveProduct, type ItemFormState } from "./actions";
 
 export interface CatalogItem {
   id: string;
@@ -39,6 +39,12 @@ export interface CatalogProduct {
   shades: CatalogItem[];
 }
 
+/** A Shop the Owner can restock into (id + name). */
+export interface Shop {
+  id: string;
+  name: string;
+}
+
 type CategoryFilter = "all" | Category;
 
 const FILTERS: { key: CategoryFilter; label: string }[] = [
@@ -58,11 +64,19 @@ type EditorTarget =
 export function CatalogView({
   items,
   products,
+  shops,
+  activeShopId,
+  activeShopName,
 }: {
   items: CatalogItem[];
   products: CatalogProduct[];
+  shops: Shop[];
+  /** The Owner's active Shop context, or `null` on "All shops". */
+  activeShopId: string | null;
+  activeShopName: string | null;
 }) {
   const [target, setTarget] = useState<EditorTarget | null>(null);
+  const [restockItem, setRestockItem] = useState<CatalogItem | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<CategoryFilter>("all");
@@ -99,6 +113,10 @@ export function CatalogView({
   }
   function onSaved(message: string) {
     setTarget(null);
+    setToast(message);
+  }
+  function onRestocked(message: string) {
+    setRestockItem(null);
     setToast(message);
   }
 
@@ -168,7 +186,12 @@ export function CatalogView({
                   </thead>
                   <tbody>
                     {visible.map((item) => (
-                      <ItemRow key={item.id} item={item} onEdit={() => openEdit(item)} />
+                      <ItemRow
+                        key={item.id}
+                        item={item}
+                        onEdit={() => openEdit(item)}
+                        onRestock={() => setRestockItem(item)}
+                      />
                     ))}
                   </tbody>
                 </table>
@@ -180,6 +203,17 @@ export function CatalogView({
 
       {target && (
         <ItemDrawer target={target} onClose={() => setTarget(null)} onSaved={onSaved} />
+      )}
+
+      {restockItem && (
+        <RestockModal
+          item={restockItem}
+          shops={shops}
+          activeShopId={activeShopId}
+          activeShopName={activeShopName}
+          onClose={() => setRestockItem(null)}
+          onSaved={onRestocked}
+        />
       )}
 
       {toast && (
@@ -208,7 +242,15 @@ function subline(item: CatalogItem): string {
 }
 
 /** One catalog Item as a flat table row — wig, wig tool, or a single cosmetic shade. */
-function ItemRow({ item, onEdit }: { item: CatalogItem; onEdit: () => void }) {
+function ItemRow({
+  item,
+  onEdit,
+  onRestock,
+}: {
+  item: CatalogItem;
+  onEdit: () => void;
+  onRestock: () => void;
+}) {
   const sub = subline(item);
   return (
     <tr>
@@ -231,6 +273,15 @@ function ItemRow({ item, onEdit }: { item: CatalogItem; onEdit: () => void }) {
             onClick={onEdit}
           >
             <Icon name="edit" />
+          </button>
+          <button
+            type="button"
+            className="row-act"
+            title="Restock"
+            aria-label={`Restock ${item.name}`}
+            onClick={onRestock}
+          >
+            <Icon name="restock" />
           </button>
         </div>
       </td>
@@ -322,6 +373,136 @@ function EmptyCatalog({ onAdd }: { onAdd: (category: Category) => void }) {
 }
 
 const INITIAL: ItemFormState = { status: "idle" };
+
+/**
+ * Record-restock modal: add N units of one Item to a Shop's stock, with an
+ * optional note. The Shop is locked to the active Shop context when one is set,
+ * otherwise chosen from a dropdown (design — Inventory restock). Submits to
+ * {@link recordRestock}; the first restock at a Shop makes it begin carrying the
+ * Item. The current per-Shop quantity and carried/not-carried status are shown
+ * once the inventory list is Shop-aware (MP-21).
+ */
+function RestockModal({
+  item,
+  shops,
+  activeShopId,
+  activeShopName,
+  onClose,
+  onSaved,
+}: {
+  item: CatalogItem;
+  shops: Shop[];
+  activeShopId: string | null;
+  activeShopName: string | null;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+}) {
+  const [state, formAction, pending] = useActionState(recordRestock, INITIAL);
+  const lockedShop = activeShopId
+    ? { id: activeShopId, name: activeShopName ?? "This shop" }
+    : null;
+  const noShop = !lockedShop && shops.length === 0;
+  const req = <span style={{ color: "var(--danger)" }}>*</span>;
+
+  useEffect(() => {
+    if (state.status === "success") onSaved(state.message);
+  }, [state, onSaved]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="scrim"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Record restock">
+        <form action={formAction}>
+          <input type="hidden" name="item_id" value={item.id} />
+          {lockedShop && <input type="hidden" name="shop_id" value={lockedShop.id} />}
+
+          <div className="m-head">
+            <h3 className="h3">Record restock</h3>
+            <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
+              <Icon name="x" />
+            </button>
+          </div>
+
+          <div className="m-body">
+            <p style={{ margin: "0 0 16px" }}>
+              Add units to <strong>{item.name}</strong>
+              {lockedShop ? (
+                <>
+                  {" "}
+                  at <strong>{lockedShop.name}</strong>
+                </>
+              ) : null}
+              .
+            </p>
+
+            <div className="field" style={{ marginBottom: 14 }}>
+              <label>Shop {req}</label>
+              {lockedShop ? (
+                <div className="ro-field">{lockedShop.name}</div>
+              ) : noShop ? (
+                <div className="ro-field">No shops yet — open a shop first.</div>
+              ) : (
+                <select className="input" name="shop_id" defaultValue={shops[0]?.id} required>
+                  {shops.map((shop) => (
+                    <option key={shop.id} value={shop.id}>
+                      {shop.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <div className="field" style={{ marginBottom: 14 }}>
+              <label>Quantity in {req}</label>
+              <input
+                className="input tnum"
+                name="amount"
+                type="number"
+                min="1"
+                step="1"
+                placeholder="0"
+                autoFocus
+                required
+              />
+            </div>
+
+            <div className="field">
+              <label>Note (optional)</label>
+              <input className="input" name="note" placeholder="e.g. New supplier delivery" />
+            </div>
+
+            {state.status === "error" && (
+              <p className="err" style={{ marginTop: 12 }}>
+                <Icon name="alert" /> {state.message}
+              </p>
+            )}
+          </div>
+
+          <div className="m-actions">
+            <button type="button" className="btn btn-secondary" onClick={onClose}>
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={pending || noShop}>
+              {pending ? "Recording…" : "Record restock"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 /** One editable shade row in the cosmetic editor (client state, serialized to a
  * hidden field on submit). `key` is a stable React id; `id` is the DB id, present
