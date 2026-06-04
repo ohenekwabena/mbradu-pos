@@ -1,6 +1,6 @@
 # PRD: Mbradu Wigs & Cosmetics — POS (v1)
 
-> Status: staged locally — pending publish to issue tracker with the `needs-triage` label.
+> Status: **published to Jira** as Epic [MP-13](https://nibbies.atlassian.net/browse/MP-13) (project **MP**, `nibbies.atlassian.net`) on 2026-06-04 — broken into 18 child issues MP-14–MP-31, all labelled `needs-triage`.
 > Authoritative domain language lives in `CONTEXT.md`; decisions in `docs/adr/0001`–`0005`.
 > **Revised to multi-Shop** (was single-shop): see ADR-0005 and the scope-change note in `CONTEXT.md`.
 
@@ -138,4 +138,4 @@ Multi-Shop **is now in scope** (ADR-0005), but these multi-Shop refinements are 
 - Production email OTP needs a custom SMTP provider (e.g. Resend) wired into Supabase before go-live.
 - Assumes **online-only** operation with reliable connectivity at the counter; hosting assumed to be Vercel + Supabase cloud.
 - **Needs confirmation at triage** (not explicitly decided during grilling): staff revoke/deactivation (story 5 implies management) and Item archiving/discontinuation. Included as plausible needs; cut or split as triage sees fit.
-- No issue tracker or git remote is configured for this repo yet; this document is staged locally pending a publish target.
+- Published to Jira as Epic [MP-13](https://nibbies.atlassian.net/browse/MP-13) (project MP, `nibbies.atlassian.net`) on 2026-06-04; git remote `origin` → `github.com/ohenekwabena/mbradu-pos`.
