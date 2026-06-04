@@ -3,6 +3,7 @@
 import { createClient as createBaseClient } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
 
+import { sendLoginCode } from "@/lib/auth/login-code";
 import { loginReducer, type LoginState } from "@/lib/auth/login-flow";
 import { createClient } from "@/lib/supabase/server";
 
@@ -30,11 +31,14 @@ async function passwordIsValid(email: string, password: string): Promise<boolean
 }
 
 async function emailOneTimeCode(email: string): Promise<void> {
-  // shouldCreateUser:false — only bootstrapped/invited accounts may sign in.
-  await ephemeralClient().auth.signInWithOtp({
-    email,
-    options: { shouldCreateUser: false },
-  });
+  // The account already exists here — its password was just validated — which is
+  // what generateLink (inside sendLoginCode) requires. A delivery failure must
+  // not block the flow: the code is logged server-side and the user can resend.
+  try {
+    await sendLoginCode(email);
+  } catch (error) {
+    console.error("[login-otp] could not send sign-in code:", error);
+  }
 }
 
 /**
