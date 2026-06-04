@@ -1,14 +1,10 @@
-import { getCurrentProfile } from "@/lib/dal";
+import { ScreenPlaceholder } from "@/components/shell/screen-placeholder";
 
-export default async function DashboardPage() {
-  const profile = await getCurrentProfile();
-
+export default function DashboardPage() {
   return (
-    <section className="flex flex-col gap-2">
-      <h1 className="text-xl font-semibold">Dashboard</h1>
-      <p className="text-sm text-black/60 dark:text-white/60">
-        Signed in as {profile.email} ({profile.role}).
-      </p>
-    </section>
+    <ScreenPlaceholder icon="dashboard" title="Dashboard">
+      The all-Shops rollup and per-Shop drill-down arrive in a later ticket
+      (MP-24–MP-26).
+    </ScreenPlaceholder>
   );
 }

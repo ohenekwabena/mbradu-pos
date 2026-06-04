@@ -2,16 +2,16 @@ import { NotOwner } from "@/components/shell/not-owner";
 import { ScreenPlaceholder } from "@/components/shell/screen-placeholder";
 import { getCurrentProfile } from "@/lib/dal";
 
-export default async function InventoryPage() {
+export default async function StaffPage() {
   const profile = await getCurrentProfile();
   if (profile.role !== "owner") {
-    return <NotOwner message="Only the Owner can manage inventory." />;
+    return <NotOwner message="Only the Owner can manage staff." />;
   }
 
   return (
-    <ScreenPlaceholder icon="inventory" title="Inventory">
-      The catalog, per-Shop stock, and the item editor arrive in a later ticket
-      (MP-17–MP-21).
+    <ScreenPlaceholder icon="staff" title="Staff">
+      Inviting Cashiers into a Shop, reassignment, and password resets arrive in
+      a later ticket (MP-27–MP-29).
     </ScreenPlaceholder>
   );
 }
