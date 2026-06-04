@@ -50,10 +50,11 @@ export type Action =
   // Sales — read and sell are Shop-scoped (Owner spans all Shops).
   | "sale:read"
   | "sale:create"
-  // Staff — only the Owner invites, reassigns, or manages Cashiers.
+  // Staff — only the Owner invites, reassigns, resets, or manages Cashiers.
   | "staff:read"
   | "staff:invite"
   | "staff:reassign"
+  | "staff:reset" // trigger a Cashier's password reset (they can't self-serve)
   // Settings — only the Owner edits the business-wide settings row.
   | "settings:read"
   | "settings:write"
@@ -95,6 +96,7 @@ const POLICY: Record<Action, Rule> = {
   "staff:read": { ownerOnly: true, shopScoped: false },
   "staff:invite": { ownerOnly: true, shopScoped: false },
   "staff:reassign": { ownerOnly: true, shopScoped: false },
+  "staff:reset": { ownerOnly: true, shopScoped: false },
 
   "settings:read": { ownerOnly: false, shopScoped: false },
   "settings:write": { ownerOnly: true, shopScoped: false },

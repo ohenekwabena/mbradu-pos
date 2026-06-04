@@ -1353,6 +1353,165 @@ table.tbl tr:last-child td {
   flex: none;
 }
 
+/* ============================================================
+   Auth screens — login / forgot password / reset password
+   Ported from the design handoff's per-page inline styles, on the
+   project's Rose tokens (the design's violet shadows become Rose, to
+   match .brand-mark / .nav-item.active elsewhere in the system).
+   ============================================================ */
+.auth-screen {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+.auth {
+  width: min(400px, 100%);
+}
+.auth-head {
+  text-align: center;
+  margin-bottom: 28px;
+}
+.auth-mark {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: var(--primary);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: 28px;
+  margin: 0 auto 14px;
+  box-shadow: 0 8px 24px rgba(194, 24, 91, 0.32);
+}
+.auth-wordmark {
+  font-size: 22px;
+  font-weight: 600;
+}
+.auth-sub {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 2px;
+}
+.card-auth {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-sm);
+  padding: 28px;
+}
+.auth-foot {
+  text-align: center;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* one-time-code entry — six single-character boxes */
+.otp {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+.otp input {
+  width: 100%;
+  aspect-ratio: 1;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 600;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  outline: none;
+  color: var(--ink);
+  background: var(--surface);
+}
+.otp input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(194, 24, 91, 0.18);
+}
+
+/* inline banners inside an auth card */
+.notice {
+  background: var(--primary-tint);
+  color: var(--primary-active);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  font-size: 13px;
+  margin-bottom: 18px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.notice svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-top: 1px;
+}
+.err-banner {
+  background: var(--danger-tint);
+  color: var(--danger-ink);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 16px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.err-banner svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* text-only link button (e.g. "Forgot password?", "← Use a different account") */
+.link {
+  color: var(--primary);
+  font-weight: 500;
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-size: 13px;
+  padding: 0;
+}
+.link:hover {
+  text-decoration: underline;
+}
+.link:disabled {
+  color: var(--disabled);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+/* read-only field — the account email shown on the reset page */
+.ro-field {
+  background: var(--grey-100);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* password-requirement hint */
+.req {
+  font-size: 12px;
+  color: var(--faint);
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.req svg {
+  width: 13px;
+  height: 13px;
+}
+.req.ok {
+  color: var(--success);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

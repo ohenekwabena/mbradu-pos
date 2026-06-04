@@ -1,6 +1,6 @@
-import { LoginForm } from "./login-form";
+import { ForgotPasswordForm } from "./forgot-form";
 
-export default function LoginPage() {
+export default function ForgotPasswordPage() {
   return (
     <main className="auth-screen">
       <div className="auth">
@@ -10,7 +10,7 @@ export default function LoginPage() {
           <div className="auth-sub">Wigs &amp; Cosmetics · POS</div>
         </div>
         <div className="card-auth">
-          <LoginForm />
+          <ForgotPasswordForm />
         </div>
         <div className="auth-foot">Mbradu POS · Accra, Ghana</div>
       </div>
