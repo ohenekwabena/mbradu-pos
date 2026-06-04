@@ -51,7 +51,7 @@ describe("money — arithmetic (integer pesewas, no floats)", () => {
   it("the classic float trap stays exact in pesewas", () => {
     // 0.10 + 0.20 GH₵ must be exactly GH₵0.30, never 0.30000000000000004.
     expect(add(10, 20)).toBe(30);
-    expect(format(add(10, 20))).toBe("GH₵0.30");
+    expect(format(add(10, 20))).toBe("GH₵ 0.30");
   });
 
   it("rejects non-integer (float) amounts loudly", () => {
@@ -62,30 +62,30 @@ describe("money — arithmetic (integer pesewas, no floats)", () => {
 });
 
 describe("money — format", () => {
-  it("formats with exactly two decimals and the symbol", () => {
-    expect(format(12345)).toBe("GH₵123.45");
-    expect(format(5)).toBe("GH₵0.05");
-    expect(format(50)).toBe("GH₵0.50");
-    expect(format(100)).toBe("GH₵1.00");
+  it("formats with exactly two decimals and the symbol (space after the symbol)", () => {
+    expect(format(12345)).toBe("GH₵ 123.45");
+    expect(format(5)).toBe("GH₵ 0.05");
+    expect(format(50)).toBe("GH₵ 0.50");
+    expect(format(100)).toBe("GH₵ 1.00");
   });
 
   it("formats zero", () => {
-    expect(format(0)).toBe("GH₵0.00");
+    expect(format(0)).toBe("GH₵ 0.00");
   });
 
   it("groups thousands by default", () => {
-    expect(format(1234567)).toBe("GH₵12,345.67");
-    expect(format(100000000)).toBe("GH₵1,000,000.00");
+    expect(format(1234567)).toBe("GH₵ 12,345.67");
+    expect(format(100000000)).toBe("GH₵ 1,000,000.00");
   });
 
   it("places the sign before the symbol for negatives", () => {
-    expect(format(-500)).toBe("-GH₵5.00");
-    expect(format(-1)).toBe("-GH₵0.01");
+    expect(format(-500)).toBe("-GH₵ 5.00");
+    expect(format(-1)).toBe("-GH₵ 0.01");
   });
 
-  it("honours symbol/grouping options", () => {
+  it("honours symbol/grouping options (no leading space when the symbol is off)", () => {
     expect(format(1234567, { symbol: false })).toBe("12,345.67");
-    expect(format(1234567, { grouping: false })).toBe("GH₵12345.67");
+    expect(format(1234567, { grouping: false })).toBe("GH₵ 12345.67");
     expect(format(1234567, { symbol: false, grouping: false })).toBe("12345.67");
   });
 });
@@ -158,7 +158,7 @@ describe("money — large values stay exact within the safe range", () => {
   it("handles a large but safe amount", () => {
     const large = 9_000_000_000_000; // GH₵90 billion in pesewas
     expect(add(large, large)).toBe(18_000_000_000_000);
-    expect(format(large)).toBe("GH₵90,000,000,000.00");
+    expect(format(large)).toBe("GH₵ 90,000,000,000.00");
     expect(parse("GH₵90,000,000,000.00")).toBe(large);
   });
 

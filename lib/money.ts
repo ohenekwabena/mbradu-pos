@@ -117,11 +117,11 @@ export interface FormatOptions {
 
 /**
  * Render integer pesewas as a GH₵ string, always with exactly two decimal
- * places: `12345` → `"GH₵123.45"`, `1234567` → `"GH₵12,345.67"`, `0` →
- * `"GH₵0.00"`. Negatives carry the sign before the symbol: `-500` →
- * `"-GH₵5.00"`. Built from integer string math (no `toFixed`/float), so the
- * output is exact for every safe-integer input and round-trips through
- * {@link parse} losslessly.
+ * places and a space after the symbol: `12345` → `"GH₵ 123.45"`, `1234567` →
+ * `"GH₵ 12,345.67"`, `0` → `"GH₵ 0.00"`. Negatives carry the sign before the
+ * symbol: `-500` → `"-GH₵ 5.00"`. Built from integer string math (no
+ * `toFixed`/float), so the output is exact for every safe-integer input and
+ * round-trips through {@link parse} losslessly (parse ignores the space).
  */
 export function format(amount: Pesewas, options: FormatOptions = {}): string {
   assertPesewas(amount);
@@ -136,7 +136,9 @@ export function format(amount: Pesewas, options: FormatOptions = {}): string {
   const pesewasText = String(pesewas).padStart(2, "0");
 
   const sign = negative ? "-" : "";
-  const prefix = symbol ? CEDI_SYMBOL : "";
+  // A space sits between the symbol and the amount ("GH₵ 12.50"); parse() strips
+  // it on the way back, so the round-trip is unaffected.
+  const prefix = symbol ? `${CEDI_SYMBOL} ` : "";
   return `${sign}${prefix}${cedisText}.${pesewasText}`;
 }
 

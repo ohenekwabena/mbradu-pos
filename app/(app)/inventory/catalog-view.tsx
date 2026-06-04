@@ -209,7 +209,7 @@ function EmptyCatalog({ onAdd }: { onAdd: () => void }) {
       <p className="body-med" style={{ margin: 0 }}>
         No items yet
       </p>
-      <p className="caption" style={{ marginTop: 4, maxWidth: 360 }}>
+      <p className="caption" style={{ margin: "4px auto 0", maxWidth: 360 }}>
         Add your first wig or wig tool to start the catalog. Cost and price are
         business-wide; stock is added per shop later.
       </p>
