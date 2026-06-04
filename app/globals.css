@@ -8,15 +8,16 @@
 
 /* ---- Tokens ---------------------------------------------- */
 :root {
-  /* brand */
+  /* brand — primary is Rose (Material Pink); supersedes design.md's violet per
+     the updated design handoff (Tweaks-panel accent). --accent stays pink. */
   --ink: #212121;
   --surface: #ffffff;
-  --primary: #673ab7;
-  --primary-hover: #5e35b1;
-  --primary-active: #512da8;
-  --primary-tint: #ede7f6;
-  --primary-100: #d1c4e9;
-  --primary-200: #b39ddb;
+  --primary: #c2185b;
+  --primary-hover: #ad1457;
+  --primary-active: #880e4f;
+  --primary-tint: #fce4ec;
+  --primary-100: #f8bbd0;
+  --primary-200: #f48fb1;
 
   /* neutrals */
   --bg: #fafafa;
@@ -200,7 +201,7 @@ a {
   font-weight: 600;
   font-size: 22px;
   margin-bottom: 8px;
-  box-shadow: 0 4px 12px rgba(103, 58, 183, 0.32);
+  box-shadow: 0 4px 12px rgba(194, 24, 91, 0.32);
   flex: none;
 }
 .nav-list {
@@ -235,7 +236,7 @@ a {
 .nav-item.active {
   background: var(--primary);
   color: #fff;
-  box-shadow: 0 4px 14px rgba(103, 58, 183, 0.3);
+  box-shadow: 0 4px 14px rgba(194, 24, 91, 0.3);
 }
 .nav-item .tip {
   position: absolute;
@@ -494,7 +495,7 @@ a {
 .select-trigger:focus,
 .input:focus-visible {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(103, 58, 183, 0.18);
+  box-shadow: 0 0 0 3px rgba(194, 24, 91, 0.18);
 }
 textarea.input {
   height: auto;
@@ -618,6 +619,7 @@ textarea.input {
   border-radius: var(--r-lg);
   box-shadow: var(--sh-sm);
   padding: 24px;
+  min-width: 0; /* allow cards in grid tracks to shrink so tables scroll, not overflow */
 }
 .card-head {
   display: flex;
@@ -1371,15 +1373,146 @@ table.tbl tr:last-child td {
   .grid-2 {
     grid-template-columns: 1fr;
   }
+  /* The action cluster is ~690px wide; sharing a row with it crushes the
+     title's "showing" descriptor. Stack the topbar so the title keeps full width. */
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+  .topbar-titles {
+    min-width: 0;
+  }
+  .topbar-actions {
+    flex-wrap: wrap;
+  }
 }
+
+/* Tablet & phone: the icon rail becomes a fixed bottom tab bar, the topbar
+   stacks (title over actions), and content gets clearance below the bar. */
+@media (max-width: 760px) {
+  .app {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    height: auto;
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 2px;
+    padding: 6px 10px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    border-right: none;
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -2px 14px rgba(33, 33, 33, 0.06);
+    z-index: 90;
+    overflow-x: auto;
+  }
+  .sidebar .brand-mark {
+    display: none;
+  }
+  .sidebar .nav-spacer {
+    display: none;
+  }
+  .nav-list {
+    flex-direction: row;
+    margin-top: 0;
+    gap: 2px;
+    flex: 1;
+    justify-content: space-around;
+  }
+  .nav-item {
+    flex: none;
+  }
+  .nav-item .tip {
+    display: none; /* tooltips are useless on touch */
+  }
+  /* the account marker trails the nav list on the bottom bar */
+  .sidebar > .nav-item {
+    margin-left: 4px;
+  }
+
+  /* clearance so content never hides behind the bottom bar */
+  .main {
+    padding-bottom: 68px;
+  }
+
+  /* topbar: title on top, actions wrap underneath */
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+    padding: 18px 16px 0;
+  }
+  .topbar-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .topbar-actions .search {
+    display: none; /* redundant — pages carry their own search */
+  }
+
+  .content,
+  .content.wide {
+    padding: 18px 16px;
+    max-width: none;
+  }
+  .section + .section {
+    margin-top: 18px;
+  }
+
+  /* let table-bearing grid items shrink so .table-wrap can scroll internally */
+  .dash-grid > *,
+  .staff-grid > *,
+  .sell > *,
+  .grid-2 > *,
+  .grid-3 > * {
+    min-width: 0;
+  }
+
+  .offline-banner {
+    padding: 10px 16px;
+  }
+
+  /* drawers go full-width on phones */
+  .drawer {
+    width: 100vw;
+  }
+}
+
 @media (max-width: 640px) {
   .kpi-row {
     grid-template-columns: 1fr;
   }
-  .content {
-    padding: 20px;
+  .card {
+    padding: 18px;
   }
-  .topbar {
-    padding: 20px 20px 0;
+}
+
+/* Small phones: shrink the tabs slightly so all Owner tabs fit the bar. */
+@media (max-width: 420px) {
+  .nav-item {
+    width: 40px;
+    height: 40px;
+  }
+  .nav-item svg {
+    width: 21px;
+    height: 21px;
+  }
+  .display {
+    font-size: 26px;
+    line-height: 32px;
+  }
+  .kpi .kpi-value {
+    font-size: 26px;
+    line-height: 32px;
   }
 }
