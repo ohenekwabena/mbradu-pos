@@ -5,10 +5,14 @@ import {
   attributeSummary,
   buildAttributes,
   EDITABLE_CATEGORIES,
+  formatExpiry,
   isCategory,
   isEditableCategory,
+  isValidISODate,
   parseItemInput,
+  parseProductInput,
   type ItemInput,
+  type ProductInput,
 } from "./catalog";
 
 describe("isCategory / isEditableCategory", () => {
@@ -190,6 +194,156 @@ describe("ATTRIBUTE_FIELDS", () => {
       "origin",
     ]);
     expect(ATTRIBUTE_FIELDS.wig_tool.map((f) => f.key)).toEqual(["type", "brand"]);
-    expect(ATTRIBUTE_FIELDS.cosmetic).toEqual([]); // MP-18
+    expect(ATTRIBUTE_FIELDS.cosmetic.map((f) => f.key)).toEqual(["shade", "size", "expiry"]);
+  });
+});
+
+describe("isValidISODate", () => {
+  it("accepts real YYYY-MM-DD dates, including a leap day", () => {
+    expect(isValidISODate("2026-12-31")).toBe(true);
+    expect(isValidISODate("2027-01-05")).toBe(true);
+    expect(isValidISODate("2024-02-29")).toBe(true); // 2024 is a leap year
+  });
+
+  it("rejects impossible days and bad shapes", () => {
+    expect(isValidISODate("2026-02-30")).toBe(false); // no Feb 30
+    expect(isValidISODate("2026-02-29")).toBe(false); // 2026 isn't a leap year
+    expect(isValidISODate("2026-13-01")).toBe(false); // month 13
+    expect(isValidISODate("2026-00-10")).toBe(false); // month 0
+    expect(isValidISODate("2026-1-1")).toBe(false); // unpadded
+    expect(isValidISODate("31-12-2026")).toBe(false); // wrong order
+    expect(isValidISODate("")).toBe(false);
+  });
+});
+
+describe("formatExpiry", () => {
+  it("renders an ISO date for display", () => {
+    expect(formatExpiry("2026-12-31")).toBe("31 Dec 2026");
+    expect(formatExpiry("2027-01-05")).toBe("5 Jan 2027");
+  });
+
+  it("returns the input unchanged when it isn't a valid date", () => {
+    expect(formatExpiry("nope")).toBe("nope");
+    expect(formatExpiry("2026-02-30")).toBe("2026-02-30");
+  });
+});
+
+describe("parseProductInput", () => {
+  const base: ProductInput = {
+    name: "Velvet Matte Lipstick",
+    brand: "Huda",
+    shades: [
+      { shade: "Ruby Woo", size: "4g", expiry: "2026-12-31", cost: "30", price: "85" },
+      { shade: "Pink Nude", size: "4g", expiry: "2027-01-15", cost: "30", price: "85" },
+    ],
+  };
+
+  it("accepts a product, deriving each shade's Item name and storing pesewas", () => {
+    const result = parseProductInput(base);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toEqual({
+      name: "Velvet Matte Lipstick",
+      brand: "Huda",
+      shades: [
+        {
+          name: "Velvet Matte Lipstick — Ruby Woo",
+          cost_pesewas: 3000,
+          price_pesewas: 8500,
+          attributes: { shade: "Ruby Woo", size: "4g", expiry: "2026-12-31" },
+        },
+        {
+          name: "Velvet Matte Lipstick — Pink Nude",
+          cost_pesewas: 3000,
+          price_pesewas: 8500,
+          attributes: { shade: "Pink Nude", size: "4g", expiry: "2027-01-15" },
+        },
+      ],
+    });
+  });
+
+  it("treats a blank brand as null and a blank cost as GH₵0", () => {
+    const result = parseProductInput({
+      ...base,
+      brand: "   ",
+      shades: [{ shade: "Bare", size: "", expiry: "2026-10-01", cost: "", price: "50" }],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.brand).toBeNull();
+    expect(result.value.shades[0].cost_pesewas).toBe(0);
+    // size dropped when blank; shade + expiry always present
+    expect(result.value.shades[0].attributes).toEqual({ shade: "Bare", expiry: "2026-10-01" });
+  });
+
+  it("preserves the Product id and shade ids when editing", () => {
+    const result = parseProductInput({
+      id: "prod-1",
+      name: "Velvet Matte Lipstick",
+      brand: "",
+      shades: [
+        { id: "item-9", shade: "Ruby Woo", size: "4g", expiry: "2026-12-31", cost: "30", price: "85" },
+      ],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.id).toBe("prod-1");
+    expect(result.value.shades[0].id).toBe("item-9");
+  });
+
+  it("requires a product name", () => {
+    expect(parseProductInput({ ...base, name: "  " })).toEqual({
+      ok: false,
+      error: "Enter a product name.",
+    });
+  });
+
+  it("requires at least one shade", () => {
+    expect(parseProductInput({ ...base, shades: [] })).toEqual({
+      ok: false,
+      error: "Add at least one shade.",
+    });
+  });
+
+  it("requires every shade to have a name", () => {
+    const result = parseProductInput({
+      ...base,
+      shades: [{ shade: "  ", size: "4g", expiry: "2026-12-31", cost: "30", price: "85" }],
+    });
+    expect(result).toEqual({ ok: false, error: "Give every shade a name." });
+  });
+
+  it("rejects two shades sharing a name (case-insensitive)", () => {
+    const result = parseProductInput({
+      ...base,
+      shades: [
+        { shade: "Ruby Woo", size: "4g", expiry: "2026-12-31", cost: "30", price: "85" },
+        { shade: "ruby woo", size: "4g", expiry: "2027-01-15", cost: "30", price: "85" },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/different name/i);
+  });
+
+  it("rejects an invalid price, cost, or expiry on a shade", () => {
+    expect(
+      parseProductInput({
+        ...base,
+        shades: [{ shade: "Ruby Woo", size: "4g", expiry: "2026-12-31", cost: "30", price: "free" }],
+      }).ok,
+    ).toBe(false);
+    expect(
+      parseProductInput({
+        ...base,
+        shades: [{ shade: "Ruby Woo", size: "4g", expiry: "2026-12-31", cost: "-1", price: "85" }],
+      }).ok,
+    ).toBe(false);
+    expect(
+      parseProductInput({
+        ...base,
+        shades: [{ shade: "Ruby Woo", size: "4g", expiry: "2026-02-30", cost: "30", price: "85" }],
+      }).ok,
+    ).toBe(false);
   });
 });

@@ -1,25 +1,27 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon } from "@/components/icon";
 import {
   ATTRIBUTE_FIELDS,
   attributeSummary,
+  CATEGORIES,
   CATEGORY_LABEL,
-  EDITABLE_CATEGORIES,
-  isEditableCategory,
+  formatExpiry,
   type Attributes,
   type Category,
 } from "@/lib/catalog";
 import { format } from "@/lib/money";
 
-import { saveItem, type ItemFormState } from "./actions";
+import { saveItem, saveProduct, type ItemFormState } from "./actions";
 
 export interface CatalogItem {
   id: string;
   category: Category;
   name: string;
+  /** The Product this Item groups under (cosmetic shades), or `null`. */
+  productId: string | null;
   /** Selling price in pesewas. */
   price: number;
   /** Cost in pesewas, or `null` when masked (non-owner). This screen is
@@ -28,17 +30,39 @@ export interface CatalogItem {
   attributes: Attributes;
 }
 
+/** A cosmetic Product line and the shade Items grouped under it — used by the
+ * editor (a cosmetic is edited a whole line at a time), not the flat list. */
+export interface CatalogProduct {
+  id: string;
+  name: string;
+  brand: string | null;
+  shades: CatalogItem[];
+}
+
 type CategoryFilter = "all" | Category;
 
 const FILTERS: { key: CategoryFilter; label: string }[] = [
   { key: "all", label: "All" },
   { key: "wig", label: "Wigs" },
+  { key: "cosmetic", label: "Cosmetics" },
   { key: "wig_tool", label: "Wig Tools" },
 ];
 
-export function CatalogView({ items }: { items: CatalogItem[] }) {
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState<CatalogItem | null>(null);
+/** What the editor drawer is doing: adding a fresh entry of some category, or
+ * editing an existing standalone Item (wig / tool) or cosmetic Product line. */
+type EditorTarget =
+  | { mode: "add"; category: Category }
+  | { mode: "edit-item"; item: CatalogItem }
+  | { mode: "edit-product"; product: CatalogProduct };
+
+export function CatalogView({
+  items,
+  products,
+}: {
+  items: CatalogItem[];
+  products: CatalogProduct[];
+}) {
+  const [target, setTarget] = useState<EditorTarget | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<CategoryFilter>("all");
@@ -58,17 +82,23 @@ export function CatalogView({ items }: { items: CatalogItem[] }) {
     );
   }, [items, query, filter]);
 
-  function openAdd() {
-    setEditing(null);
-    setOpen(true);
+  function openAdd(category: Category) {
+    setTarget({ mode: "add", category });
   }
   function openEdit(item: CatalogItem) {
-    setEditing(item);
-    setOpen(true);
+    // A cosmetic is edited as its whole Product line (all shades), since the
+    // shades share one line; wigs and tools edit as the single Item they are.
+    if (item.category === "cosmetic") {
+      const product =
+        products.find((p) => p.id === item.productId) ??
+        ({ id: item.productId ?? item.id, name: item.name, brand: null, shades: [item] } as CatalogProduct);
+      setTarget({ mode: "edit-product", product });
+    } else {
+      setTarget({ mode: "edit-item", item });
+    }
   }
   function onSaved(message: string) {
-    setOpen(false);
-    setEditing(null);
+    setTarget(null);
     setToast(message);
   }
 
@@ -108,9 +138,7 @@ export function CatalogView({ items }: { items: CatalogItem[] }) {
               ))}
             </div>
             <div style={{ flex: 1 }} />
-            <button type="button" className="btn btn-primary" onClick={openAdd}>
-              <Icon name="plus" /> Add item
-            </button>
+            <AddMenu onAdd={openAdd} />
           </div>
 
           <div className="card" style={{ padding: 0 }}>
@@ -139,39 +167,9 @@ export function CatalogView({ items }: { items: CatalogItem[] }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {visible.map((item) => {
-                      const summary = attributeSummary(item.category, item.attributes);
-                      return (
-                        <tr key={item.id}>
-                          <td>
-                            <div className="it-name">{item.name}</div>
-                            {summary && <div className="it-attr">{summary}</div>}
-                          </td>
-                          <td>
-                            <span className="chip chip-neutral">
-                              {CATEGORY_LABEL[item.category]}
-                            </span>
-                          </td>
-                          <td className="num tnum text-muted">
-                            {item.cost == null ? "—" : format(item.cost)}
-                          </td>
-                          <td className="num tnum">{format(item.price)}</td>
-                          <td className="num">
-                            <div className="row-actions">
-                              <button
-                                type="button"
-                                className="row-act"
-                                title="Edit"
-                                aria-label={`Edit ${item.name}`}
-                                onClick={() => openEdit(item)}
-                              >
-                                <Icon name="edit" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {visible.map((item) => (
+                      <ItemRow key={item.id} item={item} onEdit={() => openEdit(item)} />
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -180,12 +178,8 @@ export function CatalogView({ items }: { items: CatalogItem[] }) {
         </>
       )}
 
-      {open && (
-        <ItemDrawer
-          editing={editing}
-          onClose={() => setOpen(false)}
-          onSaved={onSaved}
-        />
+      {target && (
+        <ItemDrawer target={target} onClose={() => setTarget(null)} onSaved={onSaved} />
       )}
 
       {toast && (
@@ -200,7 +194,114 @@ export function CatalogView({ items }: { items: CatalogItem[] }) {
   );
 }
 
-function EmptyCatalog({ onAdd }: { onAdd: () => void }) {
+/** The muted second line for a catalog row. Cosmetics show size + a formatted
+ * expiry (the shade and line are already in the Item name); wigs and tools show
+ * their attribute summary. */
+function subline(item: CatalogItem): string {
+  if (item.category === "cosmetic") {
+    const parts: string[] = [];
+    if (item.attributes.size) parts.push(item.attributes.size);
+    if (item.attributes.expiry) parts.push(`Exp ${formatExpiry(item.attributes.expiry)}`);
+    return parts.join(" · ");
+  }
+  return attributeSummary(item.category, item.attributes);
+}
+
+/** One catalog Item as a flat table row — wig, wig tool, or a single cosmetic shade. */
+function ItemRow({ item, onEdit }: { item: CatalogItem; onEdit: () => void }) {
+  const sub = subline(item);
+  return (
+    <tr>
+      <td>
+        <div className="it-name">{item.name}</div>
+        {sub && <div className="it-attr">{sub}</div>}
+      </td>
+      <td>
+        <span className="chip chip-neutral">{CATEGORY_LABEL[item.category]}</span>
+      </td>
+      <td className="num tnum text-muted">{item.cost == null ? "—" : format(item.cost)}</td>
+      <td className="num tnum">{format(item.price)}</td>
+      <td className="num">
+        <div className="row-actions">
+          <button
+            type="button"
+            className="row-act"
+            title="Edit"
+            aria-label={`Edit ${item.name}`}
+            onClick={onEdit}
+          >
+            <Icon name="edit" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/** "Add item" split button: the primary adds a wig; the caret opens a menu to
+ * add a wig, a cosmetic line, or a wig tool (each opens the same editor). */
+function AddMenu({ onAdd }: { onAdd: (category: Category) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const OPTIONS: { category: Category; icon: Parameters<typeof Icon>[0]["name"]; label: string }[] = [
+    { category: "wig", icon: "inventory", label: "Add wig" },
+    { category: "cosmetic", icon: "box", label: "Add cosmetic line" },
+    { category: "wig_tool", icon: "settings", label: "Add wig tool" },
+  ];
+
+  return (
+    <div className="split-btn" ref={ref}>
+      <button type="button" className="btn btn-primary" onClick={() => onAdd("wig")}>
+        <Icon name="plus" /> Add item
+      </button>
+      <button
+        type="button"
+        className="btn btn-primary caret"
+        aria-label="More add options"
+        aria-haspopup="true"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Icon name="chevdown" />
+      </button>
+      {open && (
+        <div className="menu">
+          {OPTIONS.map((o) => (
+            <button
+              key={o.category}
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onAdd(o.category);
+              }}
+            >
+              <Icon name={o.icon} /> {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmptyCatalog({ onAdd }: { onAdd: (category: Category) => void }) {
   return (
     <div className="empty">
       <div className="empty-ico">
@@ -209,45 +310,101 @@ function EmptyCatalog({ onAdd }: { onAdd: () => void }) {
       <p className="body-med" style={{ margin: 0 }}>
         No items yet
       </p>
-      <p className="caption" style={{ margin: "4px auto 0", maxWidth: 360 }}>
-        Add your first wig or wig tool to start the catalog. Cost and price are
-        business-wide; stock is added per shop later.
+      <p className="caption" style={{ margin: "4px auto 0", maxWidth: 380 }}>
+        Add your first wig, cosmetic line, or wig tool to start the catalog. Cost
+        and price are business-wide; stock is added per shop later.
       </p>
-      <button
-        type="button"
-        className="btn btn-primary"
-        style={{ marginTop: 16 }}
-        onClick={onAdd}
-      >
-        <Icon name="plus" /> Add item
-      </button>
+      <div style={{ marginTop: 16 }}>
+        <AddMenu onAdd={onAdd} />
+      </div>
     </div>
   );
 }
 
 const INITIAL: ItemFormState = { status: "idle" };
 
+/** One editable shade row in the cosmetic editor (client state, serialized to a
+ * hidden field on submit). `key` is a stable React id; `id` is the DB id, present
+ * only for a shade that already exists. */
+interface ShadeRowState {
+  key: string;
+  id?: string;
+  shade: string;
+  size: string;
+  expiry: string;
+  cost: string;
+  price: string;
+}
+
+let shadeKeySeq = 0;
+function nextShadeKey(): string {
+  shadeKeySeq += 1;
+  return `shade-${shadeKeySeq}`;
+}
+function blankShade(): ShadeRowState {
+  return { key: nextShadeKey(), shade: "", size: "", expiry: "", cost: "", price: "" };
+}
+function shadesOf(product: CatalogProduct): ShadeRowState[] {
+  return product.shades.map((shade) => ({
+    key: nextShadeKey(),
+    id: shade.id,
+    shade: shade.attributes.shade ?? "",
+    size: shade.attributes.size ?? "",
+    expiry: shade.attributes.expiry ?? "",
+    cost: moneyValue(shade.cost),
+    price: moneyValue(shade.price),
+  }));
+}
+
+/**
+ * The single add/edit drawer for every catalog entry. The Category selector
+ * (when adding) switches the body between the standalone-Item form (wig / wig
+ * tool → {@link saveItem}) and the cosmetic-line form (a Product line with
+ * repeatable shade rows → {@link saveProduct}). Cosmetics are a category here,
+ * not a separate flow.
+ */
 function ItemDrawer({
-  editing,
+  target,
   onClose,
   onSaved,
 }: {
-  editing: CatalogItem | null;
+  target: EditorTarget;
   onClose: () => void;
   onSaved: (message: string) => void;
 }) {
-  const isEdit = !!editing;
-  const [state, formAction, pending] = useActionState(saveItem, INITIAL);
+  const editItem = target.mode === "edit-item" ? target.item : null;
+  const editProduct = target.mode === "edit-product" ? target.product : null;
+  const locked = target.mode !== "add";
 
-  // Default to the item's own category when it's one the editor supports,
-  // otherwise a wig (the common case for a new item).
-  const [category, setCategory] = useState<Category>(
-    editing && isEditableCategory(editing.category) ? editing.category : "wig",
+  const initialCategory: Category =
+    target.mode === "add"
+      ? target.category
+      : target.mode === "edit-item"
+        ? target.item.category
+        : "cosmetic";
+
+  const [category, setCategory] = useState<Category>(initialCategory);
+
+  // Both write paths are bound up-front (hooks can't be conditional); the form's
+  // action is the one matching the chosen category.
+  const [itemState, itemAction, itemPending] = useActionState(saveItem, INITIAL);
+  const [productState, productAction, productPending] = useActionState(saveProduct, INITIAL);
+
+  const isCosmetic = category === "cosmetic";
+  const formAction = isCosmetic ? productAction : itemAction;
+  const state = isCosmetic ? productState : itemState;
+  const pending = isCosmetic ? productPending : itemPending;
+
+  const [shades, setShades] = useState<ShadeRowState[]>(() =>
+    editProduct ? shadesOf(editProduct) : [blankShade()],
   );
 
   useEffect(() => {
-    if (state.status === "success") onSaved(state.message);
-  }, [state, onSaved]);
+    if (itemState.status === "success") onSaved(itemState.message);
+  }, [itemState, onSaved]);
+  useEffect(() => {
+    if (productState.status === "success") onSaved(productState.message);
+  }, [productState, onSaved]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -257,36 +414,41 @@ function ItemDrawer({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Pre-fill attribute inputs only while the selected category matches the item
-  // being edited; switching category starts those fields blank.
-  const prefill: Attributes =
-    editing && editing.category === category ? editing.attributes : {};
+  function updateShade(key: string, patch: Partial<ShadeRowState>) {
+    setShades((rows) => rows.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+  }
+  function addShade() {
+    setShades((rows) => [...rows, blankShade()]);
+  }
+  function removeShade(key: string) {
+    setShades((rows) => rows.filter((row) => row.key !== key));
+  }
 
-  // pesewas → a bare decimal string ("145000" → "1450.00") for the money inputs.
-  const moneyValue = (pesewas: number | null) =>
-    pesewas == null ? "" : format(pesewas, { symbol: false, grouping: false });
+  // Pre-fill attribute inputs only for the standalone Item being edited.
+  const prefill: Attributes = editItem && editItem.category === category ? editItem.attributes : {};
+  // The shade list rides to the Server Action as JSON (it's a dynamic list).
+  const shadesPayload = JSON.stringify(shades.map(({ key, ...rest }) => rest));
+
+  const title = locked
+    ? isCosmetic
+      ? "Edit cosmetic line"
+      : "Edit item"
+    : isCosmetic
+      ? "Add a cosmetic line"
+      : "Add an item";
 
   return (
     <>
       <div className="drawer-scrim" onClick={onClose} />
-      <aside
-        className="drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-label={isEdit ? "Edit item" : "Add an item"}
-      >
+      <aside className="drawer" role="dialog" aria-modal="true" aria-label={title}>
         <form action={formAction} style={{ display: "contents" }}>
-          {isEdit && <input type="hidden" name="id" value={editing.id} />}
+          {editItem && <input type="hidden" name="id" value={editItem.id} />}
+          {editProduct && <input type="hidden" name="id" value={editProduct.id} />}
           <input type="hidden" name="category" value={category} />
 
           <div className="d-head">
-            <h3 className="h3">{isEdit ? "Edit item" : "Add an item"}</h3>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Close"
-              onClick={onClose}
-            >
+            <h3 className="h3">{title}</h3>
+            <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
               <Icon name="x" />
             </button>
           </div>
@@ -294,83 +456,42 @@ function ItemDrawer({
           <div className="d-body">
             <div className="field" style={{ marginBottom: 14 }}>
               <label>Category</label>
-              <div className="pills">
-                {EDITABLE_CATEGORIES.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    className={"pill" + (category === c ? " active" : "")}
-                    onClick={() => setCategory(c)}
-                  >
-                    {CATEGORY_LABEL[c]}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="field" style={{ marginBottom: 14 }}>
-              <label>
-                Name <span style={{ color: "var(--danger)" }}>*</span>
-              </label>
-              <input
-                className="input"
-                name="name"
-                placeholder="Item name"
-                defaultValue={editing?.name ?? ""}
-                required
-                autoFocus
-              />
-            </div>
-
-            {/* Re-mount the attribute grid on category change so each field
-                picks up the right default value (and stale fields drop out). */}
-            <div className="attr-grid" key={category}>
-              {ATTRIBUTE_FIELDS[category].map((f) => (
-                <div
-                  className="field"
-                  key={f.key}
-                  style={f.full ? { gridColumn: "1 / -1" } : undefined}
-                >
-                  <label>{f.label}</label>
-                  <input
-                    className="input"
-                    name={`attr_${f.key}`}
-                    placeholder={f.placeholder}
-                    defaultValue={prefill[f.key] ?? ""}
-                  />
+              {locked ? (
+                <div>
+                  <span className="chip chip-neutral">{CATEGORY_LABEL[category]}</span>
                 </div>
-              ))}
+              ) : (
+                <div className="pills">
+                  {CATEGORIES.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={"pill" + (category === c ? " active" : "")}
+                      onClick={() => setCategory(c)}
+                    >
+                      {CATEGORY_LABEL[c]}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
-            <div className="attr-grid mt-16">
-              <div className="field">
-                <label>Cost (GH₵)</label>
-                <input
-                  className="input tnum"
-                  name="cost"
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  defaultValue={moneyValue(editing?.cost ?? null)}
-                />
-              </div>
-              <div className="field">
-                <label>
-                  Selling price (GH₵){" "}
-                  <span style={{ color: "var(--danger)" }}>*</span>
-                </label>
-                <input
-                  className="input tnum"
-                  name="price"
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  defaultValue={editing ? moneyValue(editing.price) : ""}
-                  required
-                />
-              </div>
-            </div>
+            {isCosmetic ? (
+              <CosmeticFields
+                editProduct={editProduct}
+                shades={shades}
+                onAddShade={addShade}
+                onUpdateShade={updateShade}
+                onRemoveShade={removeShade}
+              />
+            ) : (
+              <StandaloneFields category={category} editItem={editItem} prefill={prefill} />
+            )}
+
+            {isCosmetic && <input type="hidden" name="shades" value={shadesPayload} />}
 
             {state.status === "error" && (
-              <div className="field" style={{ marginTop: 10 }}>
+              <div className="field" style={{ marginTop: 12 }}>
                 <p className="err">
                   <Icon name="alert" /> {state.message}
                 </p>
@@ -388,11 +509,227 @@ function ItemDrawer({
               Cancel
             </button>
             <button type="submit" className="btn btn-primary" disabled={pending}>
-              {pending ? "Saving…" : isEdit ? "Save changes" : "Save item"}
+              {pending ? "Saving…" : locked ? "Save changes" : "Save item"}
             </button>
           </div>
         </form>
       </aside>
     </>
   );
+}
+
+/** Name + category attributes + cost/price, for a wig or wig tool. */
+function StandaloneFields({
+  category,
+  editItem,
+  prefill,
+}: {
+  category: Category;
+  editItem: CatalogItem | null;
+  prefill: Attributes;
+}) {
+  return (
+    <>
+      <div className="field" style={{ marginBottom: 14 }}>
+        <label>
+          Name <span style={{ color: "var(--danger)" }}>*</span>
+        </label>
+        <input
+          className="input"
+          name="name"
+          placeholder="Item name"
+          defaultValue={editItem?.name ?? ""}
+          required
+          autoFocus
+        />
+      </div>
+
+      {/* Re-mount the attribute grid on category change so each field picks up
+          the right default value (and stale fields drop out). */}
+      <div className="attr-grid" key={category}>
+        {ATTRIBUTE_FIELDS[category].map((f) => (
+          <div
+            className="field"
+            key={f.key}
+            style={f.full ? { gridColumn: "1 / -1" } : undefined}
+          >
+            <label>{f.label}</label>
+            <input
+              className="input"
+              name={`attr_${f.key}`}
+              placeholder={f.placeholder}
+              defaultValue={prefill[f.key] ?? ""}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="attr-grid mt-16">
+        <div className="field">
+          <label>Cost (GH₵)</label>
+          <input
+            className="input tnum"
+            name="cost"
+            inputMode="decimal"
+            placeholder="0.00"
+            defaultValue={moneyValue(editItem?.cost ?? null)}
+          />
+        </div>
+        <div className="field">
+          <label>
+            Selling price (GH₵) <span style={{ color: "var(--danger)" }}>*</span>
+          </label>
+          <input
+            className="input tnum"
+            name="price"
+            inputMode="decimal"
+            placeholder="0.00"
+            defaultValue={editItem ? moneyValue(editItem.price) : ""}
+            required
+          />
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** Product-line name + repeatable shade rows, for a cosmetic. */
+function CosmeticFields({
+  editProduct,
+  shades,
+  onAddShade,
+  onUpdateShade,
+  onRemoveShade,
+}: {
+  editProduct: CatalogProduct | null;
+  shades: ShadeRowState[];
+  onAddShade: () => void;
+  onUpdateShade: (key: string, patch: Partial<ShadeRowState>) => void;
+  onRemoveShade: (key: string) => void;
+}) {
+  return (
+    <>
+      <div className="field" style={{ marginBottom: 14 }}>
+        <label>
+          Product (cosmetic line) <span style={{ color: "var(--danger)" }}>*</span>
+        </label>
+        <input
+          className="input"
+          name="name"
+          placeholder="e.g. Velvet Matte Lipstick"
+          defaultValue={editProduct?.name ?? ""}
+          required
+          autoFocus
+        />
+      </div>
+
+      <div className="overline text-faint" style={{ marginBottom: 8 }}>
+        Shades
+      </div>
+
+      {shades.map((row, index) => (
+        <ShadeRow
+          key={row.key}
+          row={row}
+          index={index}
+          removable={shades.length > 1 && !row.id}
+          onChange={(patch) => onUpdateShade(row.key, patch)}
+          onRemove={() => onRemoveShade(row.key)}
+        />
+      ))}
+
+      <button type="button" className="btn btn-ghost btn-sm" onClick={onAddShade}>
+        <Icon name="plus" /> Add another shade
+      </button>
+    </>
+  );
+}
+
+function ShadeRow({
+  row,
+  index,
+  removable,
+  onChange,
+  onRemove,
+}: {
+  row: ShadeRowState;
+  index: number;
+  removable: boolean;
+  onChange: (patch: Partial<ShadeRowState>) => void;
+  onRemove: () => void;
+}) {
+  const req = <span style={{ color: "var(--danger)" }}>*</span>;
+  return (
+    <div className="shade-row">
+      <div className="field">
+        <label className="caption">Shade {req}</label>
+        <input
+          className="input"
+          value={row.shade}
+          placeholder="e.g. Rosewood"
+          onChange={(e) => onChange({ shade: e.target.value })}
+          required
+        />
+      </div>
+      <div className="field">
+        <label className="caption">Size</label>
+        <input
+          className="input"
+          value={row.size}
+          placeholder="e.g. 4g"
+          onChange={(e) => onChange({ size: e.target.value })}
+        />
+      </div>
+      <div className="field">
+        <label className="caption">Expiry {req}</label>
+        <input
+          className="input"
+          type="date"
+          value={row.expiry}
+          onChange={(e) => onChange({ expiry: e.target.value })}
+          required
+        />
+      </div>
+      <div className="field">
+        <label className="caption">Cost</label>
+        <input
+          className="input tnum"
+          inputMode="decimal"
+          value={row.cost}
+          placeholder="0.00"
+          onChange={(e) => onChange({ cost: e.target.value })}
+        />
+      </div>
+      <div className="field">
+        <label className="caption">Price {req}</label>
+        <input
+          className="input tnum"
+          inputMode="decimal"
+          value={row.price}
+          placeholder="0.00"
+          onChange={(e) => onChange({ price: e.target.value })}
+          required
+        />
+      </div>
+      <div className="field shade-actions">
+        {removable ? (
+          <button
+            type="button"
+            className="shade-del"
+            onClick={onRemove}
+            aria-label={`Remove shade ${index + 1}`}
+          >
+            <Icon name="x" /> Remove
+          </button>
+        ) : (
+          row.id && <span className="caption text-faint">Saved</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** pesewas → a bare decimal string ("145000" → "1450.00") for the money inputs. */
+function moneyValue(pesewas: number | null): string {
+  return pesewas == null ? "" : format(pesewas, { symbol: false, grouping: false });
 }

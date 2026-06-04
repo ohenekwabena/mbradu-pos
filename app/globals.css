@@ -879,6 +879,73 @@ table.tbl tr:last-child td {
   }
 }
 
+/* ---- Cosmetic products (MP-18) ---- */
+
+/* "Add item" split button: the primary action plus a caret that opens the
+   add-type menu (wig / cosmetic line / wig tool). */
+.split-btn {
+  display: inline-flex;
+  position: relative;
+}
+.split-btn > .btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.split-btn .caret {
+  width: 40px;
+  padding: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.25);
+}
+.split-btn .menu {
+  top: calc(100% + 6px);
+  right: 0;
+  left: auto;
+}
+
+/* Repeatable shade rows in the cosmetic editor (shade · size · expiry · cost ·
+   price, plus a remove action). */
+.shade-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--grey-50);
+  margin-bottom: 10px;
+}
+.shade-actions {
+  display: flex;
+  align-items: flex-end;
+}
+.shade-del {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 8px 6px;
+  border-radius: var(--r-sm);
+}
+.shade-del svg {
+  width: 14px;
+  height: 14px;
+}
+.shade-del:hover {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+@media (max-width: 540px) {
+  .shade-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 /* avatar text */
 .avatar {
   width: 34px;
