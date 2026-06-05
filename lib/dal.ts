@@ -39,12 +39,26 @@ export const getCurrentProfile = cache(async (): Promise<CurrentProfile> => {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("id, role, full_name, shop_id")
+    .select("id, role, full_name, shop_id, deactivated_at")
     .eq("id", user.id)
     .single();
 
   if (!profile) {
     redirect("/login");
+  }
+
+  // A deactivated Cashier is locked out everywhere: every Server Component and
+  // Server Action resolves the actor through here first, so the next request
+  // after deactivation lands on the locked-out screen and no further work —
+  // including completing a sale — ever runs. We send them to /deactivated rather
+  // than /login because the proxy bounces an *authenticated* visitor off /login,
+  // and a just-deactivated session is still technically signed in (the flag is
+  // app-layer, not a revoked JWT) — redirecting to /login would loop. The
+  // standalone /deactivated page explains the lockout and offers a real sign-out.
+  // Soft and reversible (the Owner can clear the flag); Owners are never
+  // deactivated, so this only ever trips a Cashier.
+  if (profile.deactivated_at) {
+    redirect("/deactivated");
   }
 
   return {

@@ -36,6 +36,7 @@ const PATHS = {
   mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/>',
   wifi: '<path d="M5 13a10 10 0 0 1 14 0M8.5 16.5a5 5 0 0 1 7 0M12 20h.01"/>',
   lock: '<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+  ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
   back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
   trend: '<path d="M3 17l5-5 4 4 8-8"/><path d="M16 8h5v5"/>',
   shops:

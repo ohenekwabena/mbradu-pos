@@ -56,6 +56,7 @@ export type Action =
   | "staff:invite"
   | "staff:reassign"
   | "staff:reset" // trigger a Cashier's password reset (they can't self-serve)
+  | "staff:deactivate" // lock a Cashier out of sign-in & selling (reversible)
   // Settings — only the Owner edits the business-wide settings row.
   | "settings:read"
   | "settings:write"
@@ -99,6 +100,7 @@ const POLICY: Record<Action, Rule> = {
   "staff:invite": { ownerOnly: true, shopScoped: false },
   "staff:reassign": { ownerOnly: true, shopScoped: false },
   "staff:reset": { ownerOnly: true, shopScoped: false },
+  "staff:deactivate": { ownerOnly: true, shopScoped: false },
 
   "settings:read": { ownerOnly: false, shopScoped: false },
   "settings:write": { ownerOnly: true, shopScoped: false },
@@ -168,18 +170,29 @@ export function assertCan(actor: Actor, action: Action, shop?: string): void {
 
 /**
  * Canonical, normalized names of the fields a Cashier must never see: cost and
- * everything derived from it (margin, profit, inventory value). Comparison is
- * on the *normalized* key (lower-cased, non-alphanumerics removed), so every
- * spelling is caught — `cost_pesewas`, `costPesewas`, `marginPesewas`,
- * `inventory_value`, … all collapse onto an entry here.
+ * everything derived from it — margin (incl. the dashboard's `marginRatio`),
+ * profit (incl. `grossProfit`), cost-of-goods-sold (`cogs`), and inventory
+ * value. Comparison is on the *normalized* key (lower-cased, non-alphanumerics
+ * removed), so every spelling collapses onto one entry here — `cost_pesewas`,
+ * `costPesewas`, `grossProfitPesewas`, `marginRatio`, `inventory_value`, …
+ *
+ * The dashboard's Owner-only figures (MP-24/26 — COGS, gross profit, margin
+ * ratio, inventory value) are all listed, so {@link redactForActor} is a true
+ * mirror of the view-model's structural gating rather than a subset of it: a
+ * cost-derived field can never reach a Cashier through either path.
  */
 const REDACTED_KEYS: ReadonlySet<string> = new Set([
   "cost",
   "costpesewas",
+  "cogs",
+  "cogspesewas",
   "margin",
   "marginpesewas",
+  "marginratio",
   "profit",
   "profitpesewas",
+  "grossprofit",
+  "grossprofitpesewas",
   "inventoryvalue",
   "inventoryvaluepesewas",
 ]);

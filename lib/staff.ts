@@ -11,6 +11,8 @@ export interface StaffMember {
   /** The Cashier's current Shop id (null for the Owner) — drives reassignment. */
   shopId: string | null;
   shopName: string | null;
+  /** True when the Owner has deactivated this Cashier — locked out, reversible. */
+  deactivated: boolean;
 }
 
 /**
@@ -23,7 +25,7 @@ export async function getStaffRoster(): Promise<StaffMember[]> {
   const admin = createAdminClient();
 
   const [{ data: profiles }, { data: shops }] = await Promise.all([
-    admin.from("profiles").select("id, role, full_name, shop_id"),
+    admin.from("profiles").select("id, role, full_name, shop_id, deactivated_at"),
     admin.from("shops").select("id, name"),
   ]);
 
@@ -50,6 +52,7 @@ export async function getStaffRoster(): Promise<StaffMember[]> {
     role: (p.role as "owner" | "cashier") ?? "cashier",
     shopId: p.shop_id ?? null,
     shopName: p.shop_id ? (shopNameById.get(p.shop_id) ?? null) : null,
+    deactivated: Boolean(p.deactivated_at),
   }));
 
   // Owner first, then cashiers alphabetically.
@@ -59,6 +62,23 @@ export async function getStaffRoster(): Promise<StaffMember[]> {
   });
 
   return members;
+}
+
+/**
+ * Whether a profile is currently deactivated. Read with the service-role admin
+ * client because the login front door calls this *before* a session exists, so
+ * there is no RLS context yet — and it's a cheap primary-key lookup. Lets the
+ * login flow stop a deactivated Cashier at the door; `getCurrentProfile`
+ * (lib/dal) then keeps every authenticated request locked out too.
+ */
+export async function isProfileDeactivated(userId: string): Promise<boolean> {
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from("profiles")
+    .select("deactivated_at")
+    .eq("id", userId)
+    .maybeSingle();
+  return Boolean(data?.deactivated_at);
 }
 
 export interface PendingInvite {

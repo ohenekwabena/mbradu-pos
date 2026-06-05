@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { type Actor } from "@/lib/auth/visibility";
+import { isSensitiveField, redactForActor, type Actor } from "@/lib/auth/visibility";
 
 import {
   buildDashboard,
@@ -346,5 +346,106 @@ describe("buildDashboard — archived Items (MP-31)", () => {
     const vm = buildDashboard(withToolArchived());
     expect(vm.today.revenuePesewas).toBe(64500);
     expect(vm.owner!.cogsPesewas).toBe(18500);
+  });
+});
+
+describe("buildDashboard — by-Shop revenue comparison (all Shops)", () => {
+  it("ranks every Shop by today's revenue, high→low, with shares of the day's total", () => {
+    const vm = buildDashboard(makeInput());
+    // Today: shopA = s1 52000 + s3 8000 = 60000; shopB = s2 4500. Total 64500.
+    expect(vm.shopComparison.map((r) => [r.shopId, r.revenuePesewas])).toEqual([
+      ["shopA", 60000],
+      ["shopB", 4500],
+    ]);
+    expect(vm.shopComparison[0].shopName).toBe("Accra Mall");
+    expect(vm.shopComparison[1].shopName).toBe("Osu Oxford St.");
+
+    expect(vm.shopComparison[0].share).toBeCloseTo(60000 / 64500, 10);
+    expect(vm.shopComparison[1].share).toBeCloseTo(4500 / 64500, 10);
+    // Shares of the day's takings sum to 1.
+    expect(vm.shopComparison.reduce((s, r) => s + r.share, 0)).toBeCloseTo(1, 10);
+  });
+
+  it("reconciles with the all-Shops today revenue (rows sum to the headline)", () => {
+    const vm = buildDashboard(makeInput());
+    const summed = vm.shopComparison.reduce((s, r) => s + r.revenuePesewas, 0);
+    expect(summed).toBe(vm.today.revenuePesewas);
+    expect(summed).toBe(64500);
+  });
+
+  it("each Shop's comparison figure equals that Shop's single-Shop rollup", () => {
+    const all = buildDashboard(makeInput());
+    // The reconciliation guarantee: narrowing scope to a Shop yields the same
+    // today revenue that Shop contributes to the all-Shops comparison.
+    for (const row of all.shopComparison) {
+      const scoped = buildDashboard(makeInput({ scope: { mode: "shop", shopId: row.shopId } }));
+      expect(scoped.today.revenuePesewas).toBe(row.revenuePesewas);
+    }
+  });
+
+  it("includes a Shop with no sales today as a zero row, sorted last", () => {
+    const shops = [...SHOPS, { id: "shopC", name: "Tema Mall" }];
+    const vm = buildDashboard(makeInput({ shops }));
+    expect(vm.shopComparison.map((r) => r.shopId)).toEqual(["shopA", "shopB", "shopC"]);
+    expect(vm.shopComparison[2]).toMatchObject({
+      shopName: "Tema Mall",
+      revenuePesewas: 0,
+      share: 0,
+    });
+  });
+
+  it("is empty under a single-Shop scope (nothing to compare)", () => {
+    const vm = buildDashboard(makeInput({ scope: { mode: "shop", shopId: "shopB" } }));
+    expect(vm.shopComparison).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hard redaction — the dashboard payload is tied to the Visibility-policy
+// (lib/auth/visibility): no cost-derived field may appear *anywhere* in a
+// Cashier's payload, and the policy's own redactor agrees (defence-in-depth).
+// This is stronger than the "owner block absent" check above — it would catch a
+// cost field leaking onto any nested row (a stock-health entry, a recent sale),
+// not just the top level. MP-26 (PRD stories 39, 40, 47).
+// ---------------------------------------------------------------------------
+
+/** Every object key anywhere in `value` (recursing through arrays and nested
+ * objects) that the Visibility-policy treats as Owner-only money. */
+function collectSensitiveKeys(value: unknown, found: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    for (const entry of value) collectSensitiveKeys(entry, found);
+  } else if (value !== null && typeof value === "object") {
+    for (const [key, val] of Object.entries(value)) {
+      if (isSensitiveField(key)) found.push(key);
+      collectSensitiveKeys(val, found);
+    }
+  }
+  return found;
+}
+
+describe("buildDashboard — hard redaction (Visibility-policy, end-to-end)", () => {
+  const cashierVm = () =>
+    buildDashboard(makeInput({ actor: CASHIER_B, scope: { mode: "shop", shopId: "shopB" } }));
+  const ownerVm = () => buildDashboard(makeInput({ actor: OWNER }));
+
+  it("a Cashier payload carries no cost-derived field anywhere (deep scan)", () => {
+    expect(collectSensitiveKeys(cashierVm())).toEqual([]);
+  });
+
+  it("the Owner payload does carry the cost-derived figures (the scan has teeth)", () => {
+    // All four live under vm.owner; the scan must find them, or the Cashier
+    // assertion above would pass vacuously.
+    expect([...new Set(collectSensitiveKeys(ownerVm()))].sort()).toEqual(
+      ["cogsPesewas", "grossProfitPesewas", "inventoryValuePesewas", "marginRatio"].sort(),
+    );
+  });
+
+  it("redactForActor strips every Owner figure when an Owner payload is bound for a Cashier", () => {
+    expect(collectSensitiveKeys(redactForActor(CASHIER_B, ownerVm()))).toEqual([]);
+  });
+
+  it("leaves a Cashier's already-clean payload untouched (redactForActor is a no-op)", () => {
+    const vm = cashierVm();
+    expect(redactForActor(CASHIER_B, vm)).toEqual(vm);
   });
 });

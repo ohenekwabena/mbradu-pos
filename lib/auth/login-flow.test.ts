@@ -32,6 +32,16 @@ describe("two-step login reducer", () => {
     expect(state.error).toMatch(/password/i);
   });
 
+  it("blocks a deactivated account at the password step with a clear message", () => {
+    const state = loginReducer(initialLoginState, {
+      type: "account_deactivated",
+    });
+
+    expect(state.step).toBe("password");
+    if (state.step !== "password") throw new Error("unreachable");
+    expect(state.error).toMatch(/deactivated/i);
+  });
+
   it("completes login when the emailed code is accepted", () => {
     const codeState = loginReducer(initialLoginState, {
       type: "password_accepted",
