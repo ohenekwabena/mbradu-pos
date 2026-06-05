@@ -1897,3 +1897,332 @@ table.tbl tr:last-child td {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* ============================================================
+   Sell — core sell flow (MP-22)
+   Two panes: the catalogue (search + cards) and a sticky cart
+   with the running total, cash tender, and change.
+   ============================================================ */
+.sell {
+  display: grid;
+  grid-template-columns: 1fr 400px;
+  gap: 24px;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .sell {
+    grid-template-columns: 1fr;
+  }
+  .sell .cart {
+    position: static;
+    max-height: none;
+  }
+}
+
+.cat-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.cat-toolbar .search {
+  flex: 1;
+  min-width: 220px;
+}
+
+.item-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 16px;
+}
+@media (max-width: 520px) {
+  .item-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+  }
+}
+.item-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-sm);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.item-card .thumb {
+  height: 76px;
+  border-radius: var(--r-md);
+  background: var(--grey-50);
+  border: 1px solid var(--line);
+  margin-bottom: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--disabled);
+}
+.item-card .thumb svg {
+  width: 24px;
+  height: 24px;
+}
+.item-card .name {
+  font-weight: 500;
+  line-height: 20px;
+}
+.item-card .attr {
+  color: var(--muted);
+  font-size: 12px;
+}
+.item-card .price-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+.item-card .price {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.item-card .add {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-pill);
+  border: none;
+  background: var(--primary);
+  color: #fff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.item-card .add svg {
+  width: 18px;
+  height: 18px;
+}
+.item-card .add:hover {
+  background: var(--primary-hover);
+}
+.item-card.oos {
+  opacity: 0.85;
+}
+.item-card.oos .add {
+  background: var(--grey-100);
+  color: var(--disabled);
+  cursor: not-allowed;
+}
+
+.cart {
+  position: sticky;
+  top: 24px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 48px);
+}
+.cart .lines {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin: 0 -4px;
+  padding: 0 4px;
+}
+.line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.line .ln-name {
+  flex: 1;
+  min-width: 0;
+}
+.line .ln-name .nm {
+  font-weight: 500;
+  font-size: 13px;
+}
+.line .ln-name .up {
+  color: var(--muted);
+  font-size: 12px;
+}
+.line .ln-total {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 82px;
+  text-align: right;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.cart .stepper {
+  height: 34px;
+}
+.cart .stepper button {
+  width: 30px;
+}
+.cart .stepper .val {
+  width: 34px;
+}
+.pay-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.pay-row label {
+  width: 72px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.pay-row .input {
+  height: 36px;
+}
+.remaining {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 8px 0;
+}
+.grand {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-top: 1px solid var(--line-strong);
+  margin-top: 4px;
+}
+.grand .gv {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.cart-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 40px 12px;
+}
+
+/* ============================================================
+   Receipt — printable, immutable record of a completed sale (MP-22)
+   ============================================================ */
+.receipt-wrap {
+  max-width: 420px;
+  margin: 0 auto;
+}
+.receipt {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-sm);
+  padding: 28px;
+}
+.r-head {
+  text-align: center;
+  margin-bottom: 20px;
+}
+.r-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-md);
+  background: var(--primary);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: 22px;
+  margin: 0 auto 10px;
+}
+.r-shop {
+  color: var(--muted);
+  font-size: 12px;
+}
+.r-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px dashed var(--line-strong);
+  border-bottom: 1px dashed var(--line-strong);
+  padding: 12px 0;
+  margin-bottom: 14px;
+}
+.r-line {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.r-line .qn {
+  flex: 1;
+}
+.r-line .nm {
+  font-weight: 500;
+  font-size: 13px;
+}
+.r-line .up {
+  color: var(--muted);
+  font-size: 12px;
+}
+.r-line .lt {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 84px;
+  text-align: right;
+}
+.r-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 14px 0;
+  border-top: 2px solid var(--ink);
+  margin-top: 6px;
+}
+.r-total .tv {
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.r-pay {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 5px 0;
+}
+.r-foot {
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 18px;
+}
+.receipt-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin: 0 0 24px;
+}
+@media print {
+  body {
+    background: #fff;
+  }
+  .sidebar,
+  .topbar,
+  .receipt-actions,
+  .no-print {
+    display: none !important;
+  }
+  .main {
+    padding-bottom: 0;
+  }
+  .content {
+    padding: 0;
+  }
+  .receipt {
+    border: none;
+    box-shadow: none;
+    max-width: 320px;
+    padding: 0;
+    margin: 0 auto;
+  }
+  @page {
+    margin: 12mm;
+  }
+}
