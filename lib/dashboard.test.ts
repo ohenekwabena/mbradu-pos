@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { type Actor } from "@/lib/auth/visibility";
+import { isSensitiveField, redactForActor, type Actor } from "@/lib/auth/visibility";
 
 import {
   buildDashboard,
@@ -369,5 +369,55 @@ describe("buildDashboard — by-Shop revenue comparison (all Shops)", () => {
   it("is empty under a single-Shop scope (nothing to compare)", () => {
     const vm = buildDashboard(makeInput({ scope: { mode: "shop", shopId: "shopB" } }));
     expect(vm.shopComparison).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hard redaction — the dashboard payload is tied to the Visibility-policy
+// (lib/auth/visibility): no cost-derived field may appear *anywhere* in a
+// Cashier's payload, and the policy's own redactor agrees (defence-in-depth).
+// This is stronger than the "owner block absent" check above — it would catch a
+// cost field leaking onto any nested row (a stock-health entry, a recent sale),
+// not just the top level. MP-26 (PRD stories 39, 40, 47).
+// ---------------------------------------------------------------------------
+
+/** Every object key anywhere in `value` (recursing through arrays and nested
+ * objects) that the Visibility-policy treats as Owner-only money. */
+function collectSensitiveKeys(value: unknown, found: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    for (const entry of value) collectSensitiveKeys(entry, found);
+  } else if (value !== null && typeof value === "object") {
+    for (const [key, val] of Object.entries(value)) {
+      if (isSensitiveField(key)) found.push(key);
+      collectSensitiveKeys(val, found);
+    }
+  }
+  return found;
+}
+
+describe("buildDashboard — hard redaction (Visibility-policy, end-to-end)", () => {
+  const cashierVm = () =>
+    buildDashboard(makeInput({ actor: CASHIER_B, scope: { mode: "shop", shopId: "shopB" } }));
+  const ownerVm = () => buildDashboard(makeInput({ actor: OWNER }));
+
+  it("a Cashier payload carries no cost-derived field anywhere (deep scan)", () => {
+    expect(collectSensitiveKeys(cashierVm())).toEqual([]);
+  });
+
+  it("the Owner payload does carry the cost-derived figures (the scan has teeth)", () => {
+    // All four live under vm.owner; the scan must find them, or the Cashier
+    // assertion above would pass vacuously.
+    expect([...new Set(collectSensitiveKeys(ownerVm()))].sort()).toEqual(
+      ["cogsPesewas", "grossProfitPesewas", "inventoryValuePesewas", "marginRatio"].sort(),
+    );
+  });
+
+  it("redactForActor strips every Owner figure when an Owner payload is bound for a Cashier", () => {
+    expect(collectSensitiveKeys(redactForActor(CASHIER_B, ownerVm()))).toEqual([]);
+  });
+
+  it("leaves a Cashier's already-clean payload untouched (redactForActor is a no-op)", () => {
+    const vm = cashierVm();
+    expect(redactForActor(CASHIER_B, vm)).toEqual(vm);
   });
 });

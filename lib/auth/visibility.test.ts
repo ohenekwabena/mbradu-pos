@@ -142,6 +142,26 @@ describe("isSensitiveField — every spelling of cost & friends", () => {
       "inventory_value",
       "inventoryValue",
       "inventory_value_pesewas",
+      // the dashboard's Owner-only figures (MP-24/26)
+      "cogs",
+      "cogs_pesewas",
+      "cogsPesewas",
+      "gross_profit",
+      "grossProfit",
+      "grossProfitPesewas",
+      "marginRatio",
+      "margin_ratio",
+    ]) {
+      expect(isSensitiveField(key)).toBe(true);
+    }
+  });
+
+  it("flags the dashboard's Owner-only figures by their exact field names", () => {
+    for (const key of [
+      "cogsPesewas",
+      "grossProfitPesewas",
+      "marginRatio",
+      "inventoryValuePesewas",
     ]) {
       expect(isSensitiveField(key)).toBe(true);
     }
@@ -204,5 +224,22 @@ describe("redactForActor — cost/margin stripped for a Cashier", () => {
     const original = { cost_pesewas: 5, price_pesewas: 10 };
     redactForActor(eastLegon, original);
     expect(original.cost_pesewas).toBe(5);
+  });
+
+  it("strips the dashboard's Owner figures, keeping revenue and emptying the owner block", () => {
+    const payload = {
+      today: { revenuePesewas: 64500 },
+      owner: {
+        cogsPesewas: 18500,
+        grossProfitPesewas: 46000,
+        marginRatio: 0.71,
+        inventoryValuePesewas: 123000,
+      },
+    };
+    // Revenue is shared (visible to both roles); every cost-derived figure goes.
+    expect(redactForActor(eastLegon, payload)).toEqual({
+      today: { revenuePesewas: 64500 },
+      owner: {},
+    });
   });
 });
