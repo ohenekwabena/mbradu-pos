@@ -42,12 +42,17 @@ const MIX_COLORS: Record<PaymentMethod, string> = {
   transfer: "#d1c4e9",
 };
 
+/** Per-series palette for the by-Shop comparison bars (design §5 — a violet /
+ * green / orange / pink / blue / teal sequence), cycled across Shops in rank
+ * order, so the top Shop is always the themeable violet. */
+const SHOP_COLORS = ["#673ab7", "#2e7d32", "#f57c00", "#ec407a", "#0288d1", "#00897b"];
+
 /**
  * The dashboard surface. Presentational only — every figure comes precomputed
  * from the pure {@link DashboardViewModel}; this component just lays it out and
  * formats money via the Money module. The Owner sees the cost-derived KPIs, the
- * revenue trend, and the payment mix (all gated on `vm.owner`); stock health and
- * the recent-sales feed are shared. MP-24.
+ * revenue trend, the by-Shop revenue comparison (all-Shops scope only), and the
+ * payment mix; stock health and the recent-sales feed are shared. MP-24, MP-25.
  */
 export function DashboardView({ vm }: { vm: DashboardViewModel }) {
   const isOwner = vm.owner !== undefined;
@@ -62,7 +67,10 @@ export function DashboardView({ vm }: { vm: DashboardViewModel }) {
       {isOwner && (
         <div className="dash-grid section">
           <RevenueCard vm={vm} />
-          <PaymentMixCard vm={vm} />
+          <div className="stack gap-16">
+            {isAllShops && <ShopComparisonCard vm={vm} />}
+            <PaymentMixCard vm={vm} />
+          </div>
         </div>
       )}
 
@@ -346,6 +354,52 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
         strokeLinejoin="round"
       />
     </svg>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Revenue by shop (all-Shops comparison).
+// ---------------------------------------------------------------------------
+
+/** The by-Shop revenue comparison: one bar per Shop, today's revenue, ranked
+ * high→low (the view-model already sorted them). Bars are sized against the top
+ * Shop and coloured by rank from {@link SHOP_COLORS}. Rendered only in the
+ * all-Shops scope; a single-Shop drill-down has nothing to compare. */
+function ShopComparisonCard({ vm }: { vm: DashboardViewModel }) {
+  const rows = vm.shopComparison;
+  const max = rows.reduce((m, r) => Math.max(m, r.revenuePesewas), 0);
+
+  return (
+    <div className="card">
+      <div className="card-head" style={{ marginBottom: 12 }}>
+        <h2 className="h2">Revenue by shop</h2>
+        <span className="caption text-faint">Today</span>
+      </div>
+
+      {max === 0 ? (
+        <div className="text-faint" style={{ padding: "4px 0" }}>
+          No sales yet today.
+        </div>
+      ) : (
+        <div className="rbs">
+          {rows.map((row, i) => (
+            <div className="rbs-row" key={row.shopId}>
+              <div className="rbs-name">{row.shopName}</div>
+              <div className="rbs-track">
+                <div
+                  className="rbs-fill"
+                  style={{
+                    width: `${Math.round((row.revenuePesewas / max) * 100)}%`,
+                    background: SHOP_COLORS[i % SHOP_COLORS.length],
+                  }}
+                />
+              </div>
+              <div className="rbs-amt">{cedis(row.revenuePesewas)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
