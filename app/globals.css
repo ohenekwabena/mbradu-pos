@@ -1786,3 +1786,114 @@ table.tbl tr:last-child td {
     line-height: 32px;
   }
 }
+
+/* ---- Item detail (MP-20) --------------------------------- */
+/* The catalog-list item name, linking through to the detail page. */
+.it-link {
+  display: block;
+}
+.it-link:hover .it-name {
+  color: var(--primary);
+}
+
+/* Breadcrumb back to the list. */
+.crumb {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.crumb:hover {
+  color: var(--primary);
+}
+.crumb svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Item summary: specs on the left, actions on the right. */
+.summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 20px;
+  align-items: start;
+}
+.specs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px 24px;
+  margin-top: 18px;
+}
+.specs .s .k {
+  color: var(--muted);
+  font-size: 12px;
+}
+.specs .s .v {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+/* Per-shop stock breakdown cards. */
+.shop-stock {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+.ss-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ss-card.nc {
+  border-style: dashed;
+  background: var(--grey-50);
+}
+.ss-card .nm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  font-size: 13px;
+}
+.ss-card .nm svg {
+  width: 16px;
+  height: 16px;
+  color: var(--primary);
+  flex: none;
+}
+.ss-card .q {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 18px;
+}
+.ss-card.nc .q {
+  color: var(--faint);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Signed amount in the movement ledger. */
+.mv-amt.pos {
+  color: var(--success);
+  font-weight: 600;
+}
+.mv-amt.neg {
+  color: var(--warning-ink);
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .summary {
+    grid-template-columns: 1fr;
+  }
+  .specs {
+    grid-template-columns: 1fr 1fr;
+  }
+}

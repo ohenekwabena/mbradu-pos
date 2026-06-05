@@ -13,8 +13,9 @@
  * *(Item, Shop)*'s movements (the ADR-0004 invariant, now per-Shop under
  * ADR-0005).
  *
- * MP-19 ships Restock and the quantity math; Corrections (MP-20) and the
- * per-Shop inventory list with status / low-stock (MP-21) build on it.
+ * MP-19 ships Restock and the quantity math; MP-20 adds Corrections (signed,
+ * either-direction); the per-Shop inventory list with status / low-stock
+ * (MP-21) builds on it.
  */
 
 /**
@@ -134,6 +135,94 @@ export function parseRestockInput(input: RestockInput): RestockParseResult {
 function parseWholeUnits(raw: string): number | null {
   const cleaned = raw.trim();
   if (!/^\d+$/.test(cleaned)) return null;
+  const value = Number(cleaned);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+/**
+ * The ledger Movement an Owner Correction appends: reason `"correction"` with a
+ * **signed** `amount` — positive to add (found/miscounted-up units), negative to
+ * remove (damage, loss, miscounted-down). The `stock_movements_sign` CHECK only
+ * requires a correction to be non-zero in either direction, so that's the rule
+ * mirrored here. Throws on zero or a non-integer; {@link parseCorrectionInput}
+ * turns untrusted form text into a safe value, and the `record_correction` RPC
+ * is what guarantees the result can't drive a Shop's quantity below 0.
+ */
+export function buildCorrectionMovement(amount: number): Movement {
+  if (!Number.isInteger(amount) || amount === 0) {
+    throw new RangeError(`correction amount must be a non-zero integer, got ${amount}`);
+  }
+  return { reason: "correction", amount };
+}
+
+/** Raw correction input from the modal form (all strings). */
+export interface CorrectionInput {
+  itemId: string;
+  shopId: string;
+  /** Signed whole units — negative to reduce, e.g. "-2". */
+  amount: string;
+  /** Why the count is being fixed, e.g. "Damaged in storage" — required. */
+  reason: string;
+}
+
+/** A validated Correction, ready for the `record_correction` RPC. */
+export interface CorrectionWrite {
+  itemId: string;
+  shopId: string;
+  /** Signed, non-zero integer — negative reduces the Shop's quantity. */
+  amount: number;
+  /** Trimmed, non-empty reason (a Correction must be justified). */
+  reason: string;
+}
+
+export type CorrectionParseResult =
+  | { ok: true; value: CorrectionWrite }
+  | { ok: false; error: string };
+
+/**
+ * Validate + normalize raw correction input into a {@link CorrectionWrite}, or
+ * return the first problem as a human message:
+ *   - an Item and a Shop must both be chosen;
+ *   - the amount must be a whole, non-zero number (negative reduces);
+ *   - a reason is **required** — unlike a Restock note, a Correction must say
+ *     why, since the append-only ledger is the only record of the adjustment.
+ *
+ * Pure (no I/O): the unit-tested core the Server Action wraps before the
+ * Owner-only `record_correction` RPC, which re-checks authorization and refuses
+ * both to drive the Shop's quantity below 0 and to touch an Item the Shop does
+ * not carry.
+ */
+export function parseCorrectionInput(input: CorrectionInput): CorrectionParseResult {
+  const itemId = input.itemId.trim();
+  if (!itemId) return { ok: false, error: "Choose an item to correct." };
+
+  const shopId = input.shopId.trim();
+  if (!shopId) return { ok: false, error: "Choose a shop to correct." };
+
+  const amount = parseSignedUnits(input.amount);
+  if (amount === null) {
+    return { ok: false, error: "Enter the correction as a whole number of units — negative to reduce." };
+  }
+  if (amount === 0) {
+    return { ok: false, error: "A correction can’t be zero — add or remove at least one unit." };
+  }
+
+  const reason = input.reason.trim();
+  if (reason === "") return { ok: false, error: "Add a reason for the correction." };
+
+  return { ok: true, value: { itemId, shopId, amount, reason } };
+}
+
+/**
+ * Parse a whole, possibly-negative unit count from a form string ("-2" → -2).
+ * Like {@link parseWholeUnits} but allows a leading sign, since a Correction can
+ * go either way; fractions and anything non-numeric are rejected (`null`), as
+ * are values beyond the safe-integer range. Zero parses to 0 — the non-zero
+ * rule is enforced by the callers, not here.
+ */
+function parseSignedUnits(raw: string): number | null {
+  const cleaned = raw.trim();
+  if (!/^[+-]?\d+$/.test(cleaned)) return null;
   const value = Number(cleaned);
   return Number.isSafeInteger(value) ? value : null;
 }
