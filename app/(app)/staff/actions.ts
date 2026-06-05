@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { NotAuthorizedError, assertCan } from "@/lib/auth/visibility";
 import { lookupAccount, sendPasswordRecoveryEmail } from "@/lib/auth/reset";
 import { getCurrentProfile } from "@/lib/dal";
+import { parseDeactivateInput } from "@/lib/deactivation";
 import { INVITE_TTL_DAYS, parseInviteInput } from "@/lib/invitations";
 import { invitationSignupLink, sendInvitationEmail } from "@/lib/invite-email";
 import { parseReassignInput } from "@/lib/reassignment";
@@ -316,6 +317,87 @@ export async function reassignCashier(
   const { error } = await supabase
     .from("profiles")
     .update({ shop_id: parsed.value.shopId })
+    .eq("id", parsed.value.cashierId)
+    .eq("role", "cashier");
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/staff");
+  return { ok: true };
+}
+
+export type DeactivateCashierResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+/**
+ * Deactivate a Cashier — the Owner's lock for someone who should no longer have
+ * access (left, suspended, lost device). Sets `profiles.deactivated_at`, after
+ * which `getCurrentProfile` bounces them off every screen and the login front
+ * door refuses them, so they can neither sign in nor sell. Their past Sales are
+ * untouched (a Sale's seller + shop are fixed at completion). Reversible via
+ * {@link reactivateCashier}.
+ */
+export async function deactivateCashier(
+  cashierId: string,
+): Promise<DeactivateCashierResult> {
+  return setCashierDeactivated(cashierId, true);
+}
+
+/**
+ * Reactivate a previously deactivated Cashier: clears `profiles.deactivated_at`,
+ * restoring sign-in and selling from their next request. Same Owner-only gates
+ * as {@link deactivateCashier}.
+ */
+export async function reactivateCashier(
+  cashierId: string,
+): Promise<DeactivateCashierResult> {
+  return setCashierDeactivated(cashierId, false);
+}
+
+/**
+ * Shared core for {@link deactivateCashier} / {@link reactivateCashier}, which
+ * differ only in whether they set or clear `deactivated_at`. Owner-only — gated
+ * here (early rejection) and again by the DB's "Owner updates profiles" RLS on
+ * the write, the server-side proof that only the Owner can lock or restore a
+ * Cashier. Refuses to touch a non-cashier, so the Owner can never lock
+ * themselves (or another Owner) out; the `role = 'cashier'` filter on the update
+ * is belt-and-braces on top.
+ */
+async function setCashierDeactivated(
+  cashierId: string,
+  deactivated: boolean,
+): Promise<DeactivateCashierResult> {
+  const verb = deactivated ? "deactivate" : "reactivate";
+
+  const profile = await getCurrentProfile();
+  try {
+    assertCan(profile, "staff:deactivate");
+  } catch (error) {
+    if (error instanceof NotAuthorizedError) {
+      return { ok: false, error: `Only the Owner can ${verb} a cashier.` };
+    }
+    throw error;
+  }
+
+  const parsed = parseDeactivateInput({ cashierId });
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+
+  const supabase = await createClient();
+
+  // Confirm the target is a Cashier (never an Owner, who must not be lockable).
+  // The Owner reads any profile via the "Owner views all profiles" RLS policy.
+  const { data: target } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", parsed.value.cashierId)
+    .maybeSingle();
+  if (!target || target.role !== "cashier") {
+    return { ok: false, error: `You can only ${verb} a cashier.` };
+  }
+
+  const { error } = await supabase
+    .from("profiles")
+    .update({ deactivated_at: deactivated ? new Date().toISOString() : null })
     .eq("id", parsed.value.cashierId)
     .eq("role", "cashier");
   if (error) return { ok: false, error: error.message };

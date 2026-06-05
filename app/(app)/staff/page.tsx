@@ -4,6 +4,7 @@ import { formatInvitedAgo } from "@/lib/invitations";
 import { getPendingInvitations, getStaffRoster } from "@/lib/staff";
 import { createClient } from "@/lib/supabase/server";
 
+import { DeactivateCashierButton } from "./deactivate-cashier-button";
 import { InvitationsPanel, type ShopOption } from "./invitations-panel";
 import { ReassignShopButton } from "./reassign-shop-button";
 import { ResetPasswordButton } from "./reset-password-button";
@@ -89,7 +90,11 @@ export default async function StaffPage() {
                       {isOwner ? "— All shops" : (member.shopName ?? "—")}
                     </td>
                     <td>
-                      <span className="chip chip-success">Active</span>
+                      {member.deactivated ? (
+                        <span className="chip chip-neutral">Deactivated</span>
+                      ) : (
+                        <span className="chip chip-success">Active</span>
+                      )}
                     </td>
                     <td className="num">
                       {!isOwner && (
@@ -97,15 +102,24 @@ export default async function StaffPage() {
                           className="row"
                           style={{ gap: 2, justifyContent: "flex-end" }}
                         >
-                          <ResetPasswordButton
-                            name={member.name}
-                            email={member.email}
-                          />
-                          <ReassignShopButton
+                          {!member.deactivated && (
+                            <>
+                              <ResetPasswordButton
+                                name={member.name}
+                                email={member.email}
+                              />
+                              <ReassignShopButton
+                                cashierId={member.id}
+                                name={member.name}
+                                currentShopId={member.shopId}
+                                shops={shops}
+                              />
+                            </>
+                          )}
+                          <DeactivateCashierButton
                             cashierId={member.id}
                             name={member.name}
-                            currentShopId={member.shopId}
-                            shops={shops}
+                            deactivated={member.deactivated}
                           />
                         </div>
                       )}

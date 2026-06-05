@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { sendLoginCode } from "@/lib/auth/login-code";
 import { loginReducer, type LoginState } from "@/lib/auth/login-flow";
+import { isProfileDeactivated } from "@/lib/staff";
 import { createClient } from "@/lib/supabase/server";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -22,12 +23,22 @@ function ephemeralClient() {
   });
 }
 
-async function passwordIsValid(email: string, password: string): Promise<boolean> {
-  const { error } = await ephemeralClient().auth.signInWithPassword({
+/**
+ * Validate email + password against Supabase Auth *without* persisting a session
+ * (the emailed code stays the real second factor). Returns the matched user's id
+ * so the caller can run post-password checks — chiefly: is this account
+ * deactivated? — or null when the credentials are wrong.
+ */
+async function validateCredentials(
+  email: string,
+  password: string,
+): Promise<{ userId: string } | null> {
+  const { data, error } = await ephemeralClient().auth.signInWithPassword({
     email,
     password,
   });
-  return !error;
+  if (error || !data.user) return null;
+  return { userId: data.user.id };
 }
 
 async function emailOneTimeCode(email: string): Promise<void> {
@@ -79,8 +90,16 @@ export async function authenticate(
     .toLowerCase();
   const password = String(formData.get("password") ?? "");
 
-  if (!(await passwordIsValid(email, password))) {
+  const credentials = await validateCredentials(email, password);
+  if (!credentials) {
     return loginReducer(prevState, { type: "password_rejected" });
+  }
+
+  // A deactivated Cashier's password may still be correct, but they must not get
+  // back in. Stop them at the front door with a clear message rather than
+  // emailing a code and then bouncing them off every screen afterwards.
+  if (await isProfileDeactivated(credentials.userId)) {
+    return loginReducer(prevState, { type: "account_deactivated" });
   }
 
   await emailOneTimeCode(email);
