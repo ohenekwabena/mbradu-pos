@@ -2464,3 +2464,61 @@ table.tbl tr:last-child td {
   font-size: 12px;
   margin-top: 2px;
 }
+
+/* ============================================================
+   Sales archive (MP-32)
+   ============================================================ */
+/* Custom date-range inputs, shown when the Custom preset is active. */
+.date-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.date-range .input {
+  width: auto;
+}
+.date-range .sep {
+  color: var(--faint);
+}
+
+/* Filtered-set summary: count + GH₵ total, with the active window on the right. */
+.sales-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 28px;
+  flex-wrap: wrap;
+  margin: 0 0 16px;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.sales-summary .ss-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.sales-summary .ss-stat .k {
+  color: var(--muted);
+  font-size: 13px;
+}
+.sales-summary .ss-stat .v {
+  font-weight: 600;
+  font-size: 18px;
+}
+.sales-summary .ss-range {
+  margin-left: auto;
+  font-size: 13px;
+}
+
+/* A completed-sales row is clickable — it opens the receipt. */
+.sale-row {
+  cursor: pointer;
+}
+
+/* "Load more" sits centred below the list. */
+.load-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+}

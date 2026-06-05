@@ -44,6 +44,7 @@ import { can, type Actor } from "@/lib/auth/visibility";
 import { type Category } from "@/lib/catalog";
 import { multiply, sum, ZERO, type Pesewas } from "@/lib/money";
 import { PAYMENT_METHODS, type PaymentMethod } from "@/lib/sale";
+import { shapeSaleRow } from "@/lib/sales-list";
 import { isExpiringSoon, stockStatus } from "@/lib/stock";
 
 // ---------------------------------------------------------------------------
@@ -461,7 +462,9 @@ function buildStockHealth(
 }
 
 /** The latest {@link RECENT_SALES_LIMIT} Sales in scope, newest first, shaped
- * for the feed (time, Shop, seller, unit count, methods, total). */
+ * for the feed. Projects the shared {@link shapeSaleRow} (the one shaper the full
+ * `/sales` list also uses, MP-32) down to the feed's `RecentSale` fields, so the
+ * two screens can never drift — the feed just omits date/customer and caps at 8. */
 function buildRecentSales(
   sales: readonly DashboardSale[],
   shopName: ReadonlyMap<string, string>,
@@ -469,17 +472,18 @@ function buildRecentSales(
   return [...sales]
     .sort((a, b) => (toMs(b.createdAt) ?? 0) - (toMs(a.createdAt) ?? 0))
     .slice(0, RECENT_SALES_LIMIT)
-    .map((sale) => ({
-      id: sale.id,
-      time: formatClock(toMs(sale.createdAt)),
-      shopName: shopName.get(sale.shopId) ?? "Unknown shop",
-      sellerName: sale.sellerName ?? "—",
-      itemCount: sale.lines.reduce((n, line) => n + line.quantity, 0),
-      methods: PAYMENT_METHODS.filter((method) =>
-        sale.payments.some((payment) => payment.method === method),
-      ),
-      totalPesewas: sale.totalPesewas,
-    }));
+    .map((sale) => {
+      const row = shapeSaleRow(sale, shopName);
+      return {
+        id: row.id,
+        time: row.time,
+        shopName: row.shopName,
+        sellerName: row.sellerName,
+        itemCount: row.itemCount,
+        methods: row.methods,
+        totalPesewas: row.totalPesewas,
+      };
+    });
 }
 
 /** Owner-only money: today's COGS and gross profit/margin (from today's lines ×
@@ -620,17 +624,6 @@ function mondayKey(ms: number): string {
 function dayMonthLabel(ms: number): string {
   const d = new Date(ms);
   return `${d.getUTCDate()} ${MONTH_LABELS[d.getUTCMonth()]}`;
-}
-
-/** UTC 12-hour clock string ("2:14 PM") for an instant, or "—" when missing. */
-function formatClock(ms: number | null): string {
-  if (ms === null) return "—";
-  const d = new Date(ms);
-  const hours = d.getUTCHours();
-  const minutes = d.getUTCMinutes();
-  const period = hours < 12 ? "AM" : "PM";
-  const hour12 = hours % 12 === 0 ? 12 : hours % 12;
-  return `${hour12}:${pad2(minutes)} ${period}`;
 }
 
 /** Zero-pad an integer to two digits. */
