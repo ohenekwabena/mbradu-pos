@@ -2295,3 +2295,152 @@ table.tbl tr:last-child td {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================
+   Dashboard (MP-24) — all-Shops rollup. The KPI, chip, card, rbs,
+   and pill rules live above; this adds the pieces the design kept
+   page-local: the two-column rows, the revenue trend chart, the
+   payment mix, and the stock-health tabs/rows.
+   ============================================================ */
+
+/* Two-column rows: a wide left (chart / recent sales) and a narrower
+   right (payment mix / stock health). Single column when narrow. */
+.dash-grid {
+  display: grid;
+  grid-template-columns: 1.9fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+@media (max-width: 1080px) {
+  .dash-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* A Cashier's trimmed dashboard shows two KPIs, not four. */
+.kpi-row.kpi-row-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+/* Segmented control (range toggle, stock-health tabs) — reuses .pill. */
+.seg-tabs {
+  display: inline-flex;
+  gap: 6px;
+}
+
+/* Revenue trend chart. The SVG keeps its viewBox aspect ratio while
+   filling the card width; paint elements never swallow hover (the
+   invisible bands beneath them drive the tooltip). */
+.chart-card,
+.chart-card-inner {
+  position: relative;
+}
+.rev-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.rev-chart path,
+.rev-chart circle,
+.rev-chart text {
+  pointer-events: none;
+}
+.rev-line {
+  stroke: var(--primary);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.rev-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.rev-dot {
+  fill: var(--primary);
+}
+.rev-xlabel {
+  fill: var(--muted);
+  font-size: 12px;
+}
+.chart-empty {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+}
+.chart-tip {
+  position: absolute;
+  transform: translate(-50%, -120%);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-lg);
+  padding: 10px 14px;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 5;
+}
+.chart-tip .per {
+  color: var(--muted);
+  font-size: 12px;
+}
+.chart-tip .val {
+  color: var(--primary);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+/* Payment mix: one stacked bar + a two-column legend. */
+.paymix-bar {
+  display: flex;
+  height: 14px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  margin: 6px 0 18px;
+}
+.paymix-bar-empty {
+  background: var(--grey-100);
+}
+.paymix-legend {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 20px;
+}
+.paymix-legend .lg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.paymix-legend .sw {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+.paymix-legend .amt {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* Stock-health list rows. */
+.health-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+.health-item:last-child {
+  border-bottom: none;
+}
+.health-item .meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
