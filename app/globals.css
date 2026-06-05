@@ -2350,8 +2350,10 @@ table.tbl tr:last-child td {
 
 /* Revenue trend chart. The SVG keeps its viewBox aspect ratio while
    filling the card width; paint elements never swallow hover (the
-   invisible bands beneath them drive the tooltip). */
-.chart-card,
+   invisible bands beneath them drive the tooltip). Only the inner wrapper
+   is positioned — it anchors the hover tooltip. The card itself stays in
+   normal flow (like every other .card), so it doesn't rise into the
+   positioned paint layer and cover the sidebar's nav tooltips. */
 .chart-card-inner {
   position: relative;
 }
