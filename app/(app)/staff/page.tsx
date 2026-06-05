@@ -1,6 +1,10 @@
 import { NotOwner } from "@/components/shell/not-owner";
 import { getCurrentProfile } from "@/lib/dal";
-import { getStaffRoster } from "@/lib/staff";
+import { formatInvitedAgo } from "@/lib/invitations";
+import { getPendingInvitations, getStaffRoster } from "@/lib/staff";
+import { createClient } from "@/lib/supabase/server";
+
+import { InvitationsPanel, type ShopOption } from "./invitations-panel";
 import { ResetPasswordButton } from "./reset-password-button";
 
 function initials(name: string): string {
@@ -15,10 +19,24 @@ export default async function StaffPage() {
     return <NotOwner message="Only the Owner can manage staff." />;
   }
 
-  const roster = await getStaffRoster();
+  const supabase = await createClient();
+  const [roster, pending, { data: shopRows }] = await Promise.all([
+    getStaffRoster(),
+    getPendingInvitations(),
+    supabase.from("shops").select("id, name").order("name"),
+  ]);
+
+  const shops: ShopOption[] = shopRows ?? [];
+  const now = new Date().getTime();
+  const pendingVms = pending.map((invite) => ({
+    id: invite.id,
+    email: invite.email,
+    shopName: invite.shopName,
+    agoLabel: formatInvitedAgo(invite.createdAt, now),
+  }));
 
   return (
-    <div className="stack gap-16">
+    <div className="staff-grid">
       <div className="card" style={{ padding: 0 }}>
         <div
           className="card-head"
@@ -93,15 +111,7 @@ export default async function StaffPage() {
         </div>
       </div>
 
-      <div className="card">
-        <h3 className="h3" style={{ marginBottom: 4 }}>
-          More staff tools are on the way
-        </h3>
-        <p className="text-muted caption" style={{ margin: 0 }}>
-          Inviting cashiers into a shop, reassigning shops, and deactivation
-          arrive in a later ticket (MP-27–MP-29).
-        </p>
-      </div>
+      <InvitationsPanel shops={shops} pending={pendingVms} />
     </div>
   );
 }
