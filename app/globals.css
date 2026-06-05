@@ -1634,7 +1634,8 @@ table.tbl tr:last-child td {
   text-decoration: none;
 }
 
-/* read-only field — the account email shown on the reset page */
+/* read-only field — the account email shown on the reset page, or the bound
+   Shop (with a leading store icon) on the invitation sign-up */
 .ro-field {
   background: var(--grey-100);
   border: 1px solid var(--line);
@@ -1642,6 +1643,11 @@ table.tbl tr:last-child td {
   padding: 10px 12px;
   color: var(--muted);
   font-size: 14px;
+}
+.ro-field svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
 }
 
 /* password-requirement hint */
