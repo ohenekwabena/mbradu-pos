@@ -9,6 +9,7 @@ import { lookupAccount, sendPasswordRecoveryEmail } from "@/lib/auth/reset";
 import { getCurrentProfile } from "@/lib/dal";
 import { INVITE_TTL_DAYS, parseInviteInput } from "@/lib/invitations";
 import { invitationSignupLink, sendInvitationEmail } from "@/lib/invite-email";
+import { parseReassignInput } from "@/lib/reassignment";
 import { createClient } from "@/lib/supabase/server";
 
 export type ResetCashierResult = { ok: true } | { ok: false; error: string };
@@ -250,5 +251,75 @@ export async function resendInvitation(
     };
   }
 
+  return { ok: true };
+}
+
+export type ReassignCashierResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Reassign a Cashier to a different Shop — the Owner's tool for staffing moves.
+ * Updates only `profiles.shop_id`: the Cashier's past Sales keep their own
+ * `shop_id` (fixed at completion), and from their next request `auth_shop()`
+ * resolves to the new Shop, so they see and sell only there. Owner-only — gated
+ * here (early rejection) and again by the DB's "Owner updates profiles" RLS on
+ * the update, which is the server-side proof of "only the Owner can reassign".
+ * Refuses to touch a non-cashier (the Owner has no Shop) and no-ops a move to
+ * the Shop they're already in.
+ */
+export async function reassignCashier(
+  cashierId: string,
+  shopId: string,
+): Promise<ReassignCashierResult> {
+  const profile = await getCurrentProfile();
+  try {
+    assertCan(profile, "staff:reassign");
+  } catch (error) {
+    if (error instanceof NotAuthorizedError) {
+      return { ok: false, error: "Only the Owner can reassign a cashier." };
+    }
+    throw error;
+  }
+
+  const supabase = await createClient();
+
+  // Confirm the target is a Cashier (never the Owner, who has no Shop) and learn
+  // their current Shop, so a no-op move is caught with a friendly message. The
+  // Owner reads any profile via the "Owner views all profiles" RLS policy.
+  const { data: target } = await supabase
+    .from("profiles")
+    .select("role, shop_id")
+    .eq("id", cashierId)
+    .maybeSingle();
+  if (!target || target.role !== "cashier") {
+    return { ok: false, error: "You can only reassign a cashier." };
+  }
+
+  const parsed = parseReassignInput({
+    cashierId,
+    shopId,
+    currentShopId: target.shop_id,
+  });
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+
+  // The destination Shop must still exist (defence-in-depth on top of the FK).
+  const { data: shop } = await supabase
+    .from("shops")
+    .select("id")
+    .eq("id", parsed.value.shopId)
+    .maybeSingle();
+  if (!shop) {
+    return { ok: false, error: "That shop no longer exists." };
+  }
+
+  // The `role = 'cashier'` guard is belt-and-braces: the Owner's row is never
+  // touched even if a bad id slipped through. RLS authorizes the write.
+  const { error } = await supabase
+    .from("profiles")
+    .update({ shop_id: parsed.value.shopId })
+    .eq("id", parsed.value.cashierId)
+    .eq("role", "cashier");
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/staff");
   return { ok: true };
 }

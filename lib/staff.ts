@@ -8,6 +8,8 @@ export interface StaffMember {
   name: string;
   email: string;
   role: "owner" | "cashier";
+  /** The Cashier's current Shop id (null for the Owner) — drives reassignment. */
+  shopId: string | null;
   shopName: string | null;
 }
 
@@ -46,6 +48,7 @@ export async function getStaffRoster(): Promise<StaffMember[]> {
     name: p.full_name ?? "—",
     email: emailById.get(p.id) ?? "",
     role: (p.role as "owner" | "cashier") ?? "cashier",
+    shopId: p.shop_id ?? null,
     shopName: p.shop_id ? (shopNameById.get(p.shop_id) ?? null) : null,
   }));
 
