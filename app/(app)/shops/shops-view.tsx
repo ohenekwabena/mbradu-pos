@@ -54,9 +54,11 @@ export function ShopsView({ shops }: { shops: ShopRow[] }) {
         }}
       >
         <p className="text-muted body" style={{ margin: 0, maxWidth: 560 }}>
-          {shops.length} {shops.length === 1 ? "shop" : "shops"} open. A shop can
-          be opened any time and then stocked from Inventory — there&rsquo;s no
-          per-shop pricing, and shops aren&rsquo;t closed in v1.
+          <span className="font-bold">
+            {shops.length} {shops.length === 1 ? " shop " : " shops "} open
+          </span>
+          . A shop can be opened any time and then stocked from Inventory — there&rsquo;s no per-shop pricing, and shops
+          aren&rsquo;t closed in v1.
         </p>
         <button type="button" className="btn btn-primary" onClick={openAdd}>
           <Icon name="plus" /> Add shop
@@ -114,11 +116,7 @@ export function ShopsView({ shops }: { shops: ShopRow[] }) {
                     <td className="num tnum">{s.staff}</td>
                     <td className="num tnum">{format(s.revenueToday)}</td>
                     <td className="num">
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => openEdit(s)}
-                      >
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => openEdit(s)}>
                         <Icon name="edit" /> Edit
                       </button>
                     </td>
@@ -130,13 +128,7 @@ export function ShopsView({ shops }: { shops: ShopRow[] }) {
         )}
       </div>
 
-      {open && (
-        <ShopDrawer
-          editing={editing}
-          onClose={() => setOpen(false)}
-          onSaved={onSaved}
-        />
-      )}
+      {open && <ShopDrawer editing={editing} onClose={() => setOpen(false)} onSaved={onSaved} />}
 
       {toast && (
         <div className="toast success" role="status">
@@ -179,22 +171,12 @@ function ShopDrawer({
   return (
     <>
       <div className="drawer-scrim" onClick={onClose} />
-      <aside
-        className="drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-label={isEdit ? "Edit shop" : "Open a new shop"}
-      >
+      <aside className="drawer" role="dialog" aria-modal="true" aria-label={isEdit ? "Edit shop" : "Open a new shop"}>
         <form action={formAction} style={{ display: "contents" }}>
           {isEdit && <input type="hidden" name="id" value={editing.id} />}
           <div className="d-head">
             <h3 className="h3">{isEdit ? "Edit shop" : "Open a new shop"}</h3>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Close"
-              onClick={onClose}
-            >
+            <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
               <Icon name="x" />
             </button>
           </div>
@@ -227,12 +209,7 @@ function ShopDrawer({
               <label>
                 Phone <span className="text-faint">(optional)</span>
               </label>
-              <input
-                className="input"
-                name="phone"
-                placeholder="+233 …"
-                defaultValue={editing?.phone ?? ""}
-              />
+              <input className="input" name="phone" placeholder="+233 …" defaultValue={editing?.phone ?? ""} />
             </div>
             {state.status === "error" && (
               <p className="err" style={{ marginTop: 6 }}>
@@ -241,17 +218,11 @@ function ShopDrawer({
             )}
             <p className="caption text-faint" style={{ marginTop: 6 }}>
               Address and phone print on this shop&rsquo;s receipts.
-              {isEdit
-                ? ""
-                : " A new shop starts carrying no items — stock it from Inventory."}
+              {isEdit ? "" : " A new shop starts carrying no items — stock it from Inventory."}
             </p>
           </div>
           <div className="d-foot">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={onClose}
-            >
+            <button type="button" className="btn btn-secondary" onClick={onClose}>
               Cancel
             </button>
             <button type="submit" className="btn btn-primary" disabled={pending}>
