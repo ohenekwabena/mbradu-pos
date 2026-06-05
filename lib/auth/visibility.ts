@@ -39,6 +39,7 @@ export type Action =
   // Catalog — business-wide. Everyone reads (cost masked); only the Owner writes.
   | "catalog:read"
   | "catalog:write"
+  | "item:archive" // archive/discontinue or restore an Item — Owner-only (MP-31)
   // Shops — only the Owner opens or edits a Shop.
   | "shop:create"
   | "shop:manage"
@@ -82,6 +83,7 @@ interface Rule {
 const POLICY: Record<Action, Rule> = {
   "catalog:read": { ownerOnly: false, shopScoped: false },
   "catalog:write": { ownerOnly: true, shopScoped: false },
+  "item:archive": { ownerOnly: true, shopScoped: false },
 
   "shop:create": { ownerOnly: true, shopScoped: false },
   "shop:manage": { ownerOnly: true, shopScoped: false },

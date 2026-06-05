@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { parseArchiveInput, parseDiscontinueProductInput } from "@/lib/archive";
 import { assertCan } from "@/lib/auth/visibility";
 import {
   ATTRIBUTE_FIELDS,
@@ -275,4 +276,84 @@ export async function recordCorrection(
         ? `Correction recorded — ${magnitude} ${units} added`
         : `Correction recorded — ${magnitude} ${units} removed`,
   };
+}
+
+/**
+ * Archive (discontinue) an Item so it drops out of the sell and restock pickers,
+ * while its history (past Sale line items and the stock ledger) stays intact.
+ * Owner-only — gated here with {@link assertCan} for an early reject and again by
+ * is_owner() inside the SECURITY DEFINER `archive_item` RPC, the sole write path.
+ * The block-until-zero rule (no stock on hand at any Shop) is enforced in the RPC
+ * against live data; its error is surfaced verbatim. Bound via `useActionState`.
+ */
+export async function archiveItem(
+  _prev: ItemFormState,
+  formData: FormData,
+): Promise<ItemFormState> {
+  const profile = await getCurrentProfile();
+  assertCan(profile, "item:archive");
+
+  const parsed = parseArchiveInput({ itemId: String(formData.get("item_id") ?? "") });
+  if (!parsed.ok) return { status: "error", message: parsed.error };
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("archive_item", { p_item_id: parsed.value.itemId });
+  if (error) return { status: "error", message: error.message };
+
+  revalidatePath("/inventory");
+  revalidatePath(`/inventory/${parsed.value.itemId}`);
+  return { status: "success", message: "Item discontinued — moved to Archived" };
+}
+
+/**
+ * Restore (un-archive) an Item back into the active catalog so it can be sold and
+ * restocked again. Owner-only — gated with {@link assertCan} and again by
+ * is_owner() inside the `restore_item` RPC. Bound via `useActionState`.
+ */
+export async function restoreItem(
+  _prev: ItemFormState,
+  formData: FormData,
+): Promise<ItemFormState> {
+  const profile = await getCurrentProfile();
+  assertCan(profile, "item:archive");
+
+  const parsed = parseArchiveInput({ itemId: String(formData.get("item_id") ?? "") });
+  if (!parsed.ok) return { status: "error", message: parsed.error };
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("restore_item", { p_item_id: parsed.value.itemId });
+  if (error) return { status: "error", message: error.message };
+
+  revalidatePath("/inventory");
+  revalidatePath(`/inventory/${parsed.value.itemId}`);
+  return { status: "success", message: "Item restored" };
+}
+
+/**
+ * Discontinue a whole cosmetic Product — archive all its shade Items at once.
+ * Owner-only — gated here with {@link assertCan} and again by is_owner() inside
+ * the SECURITY DEFINER `archive_product` RPC. All-or-nothing: the RPC refuses if
+ * any shade still holds stock (block-until-zero across the line), raising an error
+ * this surfaces verbatim. Bound via `useActionState`.
+ */
+export async function archiveProduct(
+  _prev: ItemFormState,
+  formData: FormData,
+): Promise<ItemFormState> {
+  const profile = await getCurrentProfile();
+  assertCan(profile, "item:archive");
+
+  const parsed = parseDiscontinueProductInput({
+    productId: String(formData.get("product_id") ?? ""),
+  });
+  if (!parsed.ok) return { status: "error", message: parsed.error };
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("archive_product", {
+    p_product_id: parsed.value.productId,
+  });
+  if (error) return { status: "error", message: error.message };
+
+  revalidatePath("/inventory");
+  return { status: "success", message: "Cosmetic line discontinued" };
 }

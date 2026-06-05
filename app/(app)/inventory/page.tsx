@@ -36,7 +36,7 @@ export default async function InventoryPage() {
   ] = await Promise.all([
     supabase
       .from("items_catalog")
-      .select("id, category, name, product_id, price_pesewas, cost_pesewas, attributes")
+      .select("id, category, name, product_id, price_pesewas, cost_pesewas, attributes, archived_at")
       .order("name"),
     supabase.from("products").select("id, name, brand").order("name"),
     supabase.from("shops").select("id, name").order("name"),
@@ -60,6 +60,7 @@ export default async function InventoryPage() {
     price: row.price_pesewas as number,
     cost: (row.cost_pesewas ?? null) as number | null,
     attributes: (row.attributes ?? {}) as Attributes,
+    archived: row.archived_at != null,
   }));
 
   // The list is flat — every Item (including each cosmetic shade) is its own
@@ -114,15 +115,22 @@ export default async function InventoryPage() {
       ? { mode: "shop", shopId: activeShopId, shopName: activeShopName }
       : { mode: "all", shopCount: shops.length };
 
-  const items: InventoryItem[] = allItems.map((item) => ({
-    ...item,
-    stock: buildItemStock(item, {
-      perShop: stockByItem.get(item.id),
-      activeShopId,
-      lowStockThreshold,
-      expiringSoon: isExpiringSoon(item.attributes.expiry, today, expiryWarningDays),
-    }),
-  }));
+  const items: InventoryItem[] = allItems.map((item) => {
+    const perShop = stockByItem.get(item.id);
+    // Total on hand across *all* Shops — scope-independent, so the archive guard
+    // (block-until-zero) is the same whether viewing one Shop or all (MP-31).
+    const totalOnHand = perShop ? [...perShop.values()].reduce((sum, q) => sum + q, 0) : 0;
+    return {
+      ...item,
+      totalOnHand,
+      stock: buildItemStock(item, {
+        perShop,
+        activeShopId,
+        lowStockThreshold,
+        expiringSoon: isExpiringSoon(item.attributes.expiry, today, expiryWarningDays),
+      }),
+    };
+  });
 
   return (
     <CatalogView

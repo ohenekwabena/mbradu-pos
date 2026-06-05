@@ -4,6 +4,7 @@ import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
 import { Icon } from "@/components/icon";
+import { archiveBlockReason, canArchive } from "@/lib/archive";
 import {
   ATTRIBUTE_FIELDS,
   attributeSummary,
@@ -16,6 +17,11 @@ import {
 import { format } from "@/lib/money";
 
 import { saveItem, saveProduct, type ItemFormState } from "./actions";
+import {
+  DiscontinueItemModal,
+  DiscontinueLineModal,
+  RestoreItemButton,
+} from "./archive-controls";
 import { RestockModal } from "./stock-modals";
 
 export interface CatalogItem {
@@ -30,6 +36,8 @@ export interface CatalogItem {
    * Owner-only, so in practice it's always present. */
   cost: number | null;
   attributes: Attributes;
+  /** Archived/discontinued (MP-31): the row's `archived_at` is non-null. */
+  archived: boolean;
 }
 
 /** A cosmetic Product line and the shade Items grouped under it — used by the
@@ -81,6 +89,9 @@ export interface ItemStock {
 /** A catalog Item plus its scope-aware stock view — one inventory-list row. */
 export interface InventoryItem extends CatalogItem {
   stock: ItemStock;
+  /** Units on hand across *all* Shops (scope-independent) — gates archiving
+   * (block-until-zero), a business-wide decision (MP-31). */
+  totalOnHand: number;
 }
 
 /** The Owner's active Shop context, shaping the whole list (ADR-0005). */
@@ -137,10 +148,13 @@ export function CatalogView({
 }) {
   const [target, setTarget] = useState<EditorTarget | null>(null);
   const [restockItem, setRestockItem] = useState<CatalogItem | null>(null);
+  const [discontinueItem, setDiscontinueItem] = useState<CatalogItem | null>(null);
+  const [discontinueProduct, setDiscontinueProduct] = useState<CatalogProduct | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<CategoryFilter>("all");
   const [quick, setQuick] = useState<QuickFilter>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
     if (!toast) return;
@@ -152,6 +166,7 @@ export function CatalogView({
     const q = query.trim().toLowerCase();
     const rows = items.filter(
       (item) =>
+        item.archived === showArchived &&
         (filter === "all" || item.category === filter) &&
         (q === "" || item.name.toLowerCase().includes(q)) &&
         (quick === null ||
@@ -165,7 +180,18 @@ export function CatalogView({
         .sort((a, b) => Number(b.stock.carried) - Number(a.stock.carried));
     }
     return rows;
-  }, [items, query, filter, quick, scope.mode]);
+  }, [items, query, filter, quick, scope.mode, showArchived]);
+
+  // Total on-hand per cosmetic line (sum across its shades, all Shops) — gates the
+  // editor's "Discontinue line" action (block-until-zero across the whole line).
+  const lineOnHandByProduct = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const item of items) {
+      if (!item.productId) continue;
+      totals.set(item.productId, (totals.get(item.productId) ?? 0) + item.totalOnHand);
+    }
+    return totals;
+  }, [items]);
 
   function openAdd(category: Category) {
     setTarget({ mode: "add", category });
@@ -188,6 +214,14 @@ export function CatalogView({
   }
   function onRestocked(message: string) {
     setRestockItem(null);
+    setToast(message);
+  }
+  function onDiscontinued(message: string) {
+    setDiscontinueItem(null);
+    setDiscontinueProduct(null);
+    setToast(message);
+  }
+  function onRestored(message: string) {
     setToast(message);
   }
 
@@ -251,6 +285,16 @@ export function CatalogView({
                 Expiring soon
               </button>
             </div>
+            <div className="pills">
+              <button
+                type="button"
+                className={"pill" + (showArchived ? " active" : "")}
+                onClick={() => setShowArchived((v) => !v)}
+                title="Show discontinued items"
+              >
+                <Icon name="box" /> Archived
+              </button>
+            </div>
             <div style={{ flex: 1 }} />
             <AddMenu onAdd={openAdd} />
           </div>
@@ -262,10 +306,12 @@ export function CatalogView({
                   <Icon name="box" />
                 </div>
                 <p className="body-med" style={{ margin: 0 }}>
-                  No items match these filters
+                  {showArchived ? "No archived items" : "No items match these filters"}
                 </p>
                 <p className="caption" style={{ marginTop: 4 }}>
-                  Try a different search or category.
+                  {showArchived
+                    ? "Discontinued items show here — you can restore them anytime."
+                    : "Try a different search or category."}
                 </p>
               </div>
             ) : (
@@ -290,6 +336,8 @@ export function CatalogView({
                         scope={scope}
                         onEdit={() => openEdit(item)}
                         onRestock={() => setRestockItem(item)}
+                        onDiscontinue={() => setDiscontinueItem(item)}
+                        onRestored={onRestored}
                       />
                     ))}
                   </tbody>
@@ -301,7 +349,18 @@ export function CatalogView({
       )}
 
       {target && (
-        <ItemDrawer target={target} onClose={() => setTarget(null)} onSaved={onSaved} />
+        <ItemDrawer
+          target={target}
+          lineOnHand={
+            target.mode === "edit-product" ? (lineOnHandByProduct.get(target.product.id) ?? 0) : 0
+          }
+          onClose={() => setTarget(null)}
+          onSaved={onSaved}
+          onDiscontinueLine={(product) => {
+            setTarget(null);
+            setDiscontinueProduct(product);
+          }}
+        />
       )}
 
       {restockItem && (
@@ -312,6 +371,24 @@ export function CatalogView({
           activeShopName={activeShopName}
           onClose={() => setRestockItem(null)}
           onSaved={onRestocked}
+        />
+      )}
+
+      {discontinueItem && (
+        <DiscontinueItemModal
+          itemId={discontinueItem.id}
+          itemName={discontinueItem.name}
+          onClose={() => setDiscontinueItem(null)}
+          onDone={onDiscontinued}
+        />
+      )}
+
+      {discontinueProduct && (
+        <DiscontinueLineModal
+          productId={discontinueProduct.id}
+          productName={discontinueProduct.name}
+          onClose={() => setDiscontinueProduct(null)}
+          onDone={onDiscontinued}
         />
       )}
 
@@ -347,17 +424,23 @@ function ItemRow({
   scope,
   onEdit,
   onRestock,
+  onDiscontinue,
+  onRestored,
 }: {
   item: InventoryItem;
   scope: InventoryScope;
   onEdit: () => void;
   onRestock: () => void;
+  onDiscontinue: () => void;
+  onRestored: (message: string) => void;
 }) {
   const sub = subline(item);
   const { stock } = item;
   // In a single Shop, an Item it doesn't carry yet gets a "Stock here" action —
   // the first restock starts the Shop carrying it (CONTEXT.md).
   const stockHereOnly = scope.mode === "shop" && !stock.carried;
+  // Discontinuing is blocked while any Shop still holds stock (block-until-zero).
+  const discontinueBlock = archiveBlockReason(item.totalOnHand);
 
   return (
     <tr>
@@ -387,10 +470,31 @@ function ItemRow({
         )}
       </td>
       <td>
-        <span className={"chip " + KIND_CHIP[stock.statusKind]}>{stock.statusLabel}</span>
+        {item.archived ? (
+          <span className="chip chip-outline">Archived</span>
+        ) : (
+          <span className={"chip " + KIND_CHIP[stock.statusKind]}>{stock.statusLabel}</span>
+        )}
       </td>
       <td className="num">
-        {stockHereOnly ? (
+        {item.archived ? (
+          <div className="row-actions">
+            <RestoreItemButton
+              itemId={item.id}
+              itemName={item.name}
+              onDone={onRestored}
+              variant="row"
+            />
+            <Link
+              href={`/inventory/${item.id}`}
+              className="row-act"
+              title="History"
+              aria-label={`View ${item.name} stock history`}
+            >
+              <Icon name="history" />
+            </Link>
+          </div>
+        ) : stockHereOnly ? (
           <button
             type="button"
             className="btn btn-ghost btn-sm"
@@ -418,6 +522,16 @@ function ItemRow({
               onClick={onRestock}
             >
               <Icon name="restock" />
+            </button>
+            <button
+              type="button"
+              className="row-act"
+              title={discontinueBlock ?? "Discontinue"}
+              aria-label={`Discontinue ${item.name}`}
+              onClick={onDiscontinue}
+              disabled={!canArchive(item.totalOnHand)}
+            >
+              <Icon name="box" />
             </button>
             <Link
               href={`/inventory/${item.id}`}
@@ -561,12 +675,17 @@ function shadesOf(product: CatalogProduct): ShadeRowState[] {
  */
 function ItemDrawer({
   target,
+  lineOnHand,
   onClose,
   onSaved,
+  onDiscontinueLine,
 }: {
   target: EditorTarget;
+  /** Units on hand across the cosmetic line's shades — gates "Discontinue line". */
+  lineOnHand: number;
   onClose: () => void;
   onSaved: (message: string) => void;
+  onDiscontinueLine: (product: CatalogProduct) => void;
 }) {
   const editItem = target.mode === "edit-item" ? target.item : null;
   const editProduct = target.mode === "edit-product" ? target.product : null;
@@ -701,6 +820,18 @@ function ItemDrawer({
           </div>
 
           <div className="d-foot">
+            {editProduct && (
+              <button
+                type="button"
+                className="btn btn-danger"
+                style={{ marginRight: "auto" }}
+                onClick={() => onDiscontinueLine(editProduct)}
+                disabled={!canArchive(lineOnHand)}
+                title={archiveBlockReason(lineOnHand) ?? undefined}
+              >
+                <Icon name="box" /> Discontinue line
+              </button>
+            )}
             <button type="button" className="btn btn-secondary" onClick={onClose}>
               Cancel
             </button>
