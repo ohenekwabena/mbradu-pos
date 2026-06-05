@@ -5,7 +5,7 @@ import { type Attributes, type Category } from "@/lib/catalog";
 import { getCurrentProfile } from "@/lib/dal";
 import { ALL_SHOPS } from "@/lib/shop-context";
 import { readShopScope } from "@/lib/shop-context-server";
-import { type StockReason } from "@/lib/stock";
+import { isExpiringSoon, type StockReason } from "@/lib/stock";
 import { createClient } from "@/lib/supabase/server";
 
 import { ItemDetailView, type ItemDetail, type LedgerEntry } from "./item-detail-view";
@@ -41,16 +41,22 @@ export default async function ItemDetailPage({
 
   if (!itemRow) notFound();
 
-  const [{ data: shopRows }, { data: stockRows }, { data: movementRows }] = await Promise.all([
-    supabase.from("shops").select("id, name").order("name"),
-    supabase.from("shop_stock").select("shop_id, quantity").eq("item_id", id),
-    supabase
-      .from("stock_movements")
-      .select("id, shop_id, reason, amount, note, actor, sale_id, created_at")
-      .eq("item_id", id)
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true }),
-  ]);
+  const [{ data: shopRows }, { data: stockRows }, { data: movementRows }, { data: settingsRow }] =
+    await Promise.all([
+      supabase.from("shops").select("id, name").order("name"),
+      supabase.from("shop_stock").select("shop_id, quantity").eq("item_id", id),
+      supabase
+        .from("stock_movements")
+        .select("id, shop_id, reason, amount, note, actor, sale_id, created_at")
+        .eq("item_id", id)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true }),
+      supabase
+        .from("shop_settings")
+        .select("low_stock_threshold, expiry_warning_days")
+        .eq("id", true)
+        .maybeSingle(),
+    ]);
 
   const shops = (shopRows ?? []).map((r) => ({ id: r.id as string, name: r.name as string }));
   const shopName = new Map(shops.map((s) => [s.id, s.name] as const));
@@ -111,9 +117,17 @@ export default async function ItemDetailPage({
     attributes: (itemRow.attributes ?? {}) as Attributes,
   };
 
+  // Business-wide stock-health settings (ADR-0005): the threshold drives the
+  // per-Shop status chips, the window the "Expiring soon" flag. "Today" is the
+  // server's UTC date (the business runs in Ghana/GMT), kept off the client.
+  const lowStockThreshold = (settingsRow?.low_stock_threshold ?? 5) as number;
+  const expiryWarningDays = (settingsRow?.expiry_warning_days ?? 30) as number;
+  const expiringSoon = isExpiringSoon(item.attributes.expiry, todayIsoUtc(), expiryWarningDays);
+
   // The Owner's active Shop context, used to default the modals' Shop.
-  const scope = await readShopScope();
-  const activeShopId = scope !== ALL_SHOPS && shops.some((s) => s.id === scope) ? scope : null;
+  const shopScope = await readShopScope();
+  const activeShopId =
+    shopScope !== ALL_SHOPS && shops.some((s) => s.id === shopScope) ? shopScope : null;
 
   return (
     <ItemDetailView
@@ -121,8 +135,20 @@ export default async function ItemDetailPage({
       shops={shops}
       carriedStock={carriedStock}
       ledger={ledger}
+      lowStockThreshold={lowStockThreshold}
+      expiringSoon={expiringSoon}
       activeShopId={activeShopId}
       activeShopName={activeShopId ? (shopName.get(activeShopId) ?? null) : null}
     />
   );
+}
+
+/** Today's date as a UTC `YYYY-MM-DD` string — the business runs in Ghana (GMT),
+ * so UTC is the local calendar day. Fed to the pure {@link isExpiringSoon}. */
+function todayIsoUtc(): string {
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(now.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }

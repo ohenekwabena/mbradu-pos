@@ -226,3 +226,86 @@ function parseSignedUnits(raw: string): number | null {
   const value = Number(cleaned);
   return Number.isSafeInteger(value) ? value : null;
 }
+
+// ===========================================================================
+// Stock health (MP-21) — the pure status logic the per-Shop inventory list,
+// the Item-detail stock cards, and (later) the dashboards share. Driven by the
+// single business-wide `shop_settings` row (one low-stock threshold, one expiry
+// window — ADR-0005), not per-Shop or per-Item.
+// ===========================================================================
+
+/**
+ * The stock-health of one **carried** Shop stock, from its quantity and the
+ * business-wide low-stock threshold (`shop_settings.low_stock_threshold`):
+ *   - `"out"` — carried but nothing on hand (quantity 0);
+ *   - `"low"` — at or below the threshold (and above 0);
+ *   - `"in"`  — above the threshold.
+ *
+ * Only meaningful where the Shop **carries** the Item (a `shop_stock` row
+ * exists). "Out of stock" (carried, 0) is deliberately distinct from "not
+ * carried" (no row) — the caller represents the latter separately (CONTEXT.md).
+ */
+export type StockStatus = "out" | "low" | "in";
+
+/** Classify a carried Shop stock's {@link StockStatus} against the threshold.
+ * A `<= 0` quantity is "out"; `<= threshold` is "low"; anything more is "in". */
+export function stockStatus(quantity: number, lowStockThreshold: number): StockStatus {
+  if (quantity <= 0) return "out";
+  if (quantity <= lowStockThreshold) return "low";
+  return "in";
+}
+
+/** Whole-day milliseconds — the unit the expiry window counts in. */
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Whether a cosmetic's `expiry` falls within the business-wide warning window —
+ * i.e. the expiry date is on or before `today + windowDays`. **Already-past**
+ * dates count too: there's no separate "expired" state in v1, and an expired
+ * Item still needs the Owner's attention. Items without an expiry (wigs, wig
+ * tools, or a cosmetic missing the field) are never flagged.
+ *
+ * Pure and deterministic: `today` is passed in as an ISO `YYYY-MM-DD` string
+ * (the caller stamps it server-side) rather than read from the clock here, so
+ * the rule is unit-testable and free of timezone drift — the business runs in
+ * Ghana (GMT/UTC). A missing or malformed date is treated as "not expiring".
+ */
+export function isExpiringSoon(
+  expiry: string | null | undefined,
+  today: string,
+  windowDays: number,
+): boolean {
+  if (!expiry) return false;
+  const expiryMs = isoDateToUtcMs(expiry);
+  const todayMs = isoDateToUtcMs(today);
+  if (expiryMs === null || todayMs === null) return false;
+  return expiryMs <= todayMs + windowDays * MS_PER_DAY;
+}
+
+/**
+ * Parse a strict `YYYY-MM-DD` string to its UTC-midnight epoch ms, or `null`
+ * when it isn't a real calendar date (malformed, or an impossible day like
+ * `2026-02-30`). Built from explicit components — no `Date` *string* parsing —
+ * so it's deterministic across engines and timezones.
+ *
+ * (Mirrors `isValidISODate` in the Catalog module; duplicated rather than
+ * imported to keep this Stock module dependency-free, as its header intends.)
+ */
+function isoDateToUtcMs(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const ms = Date.UTC(year, month - 1, day);
+  const date = new Date(ms);
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return ms;
+}
