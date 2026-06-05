@@ -55,6 +55,7 @@ export type Action =
   | "staff:invite"
   | "staff:reassign"
   | "staff:reset" // trigger a Cashier's password reset (they can't self-serve)
+  | "staff:deactivate" // lock a Cashier out of sign-in & selling (reversible)
   // Settings — only the Owner edits the business-wide settings row.
   | "settings:read"
   | "settings:write"
@@ -97,6 +98,7 @@ const POLICY: Record<Action, Rule> = {
   "staff:invite": { ownerOnly: true, shopScoped: false },
   "staff:reassign": { ownerOnly: true, shopScoped: false },
   "staff:reset": { ownerOnly: true, shopScoped: false },
+  "staff:deactivate": { ownerOnly: true, shopScoped: false },
 
   "settings:read": { ownerOnly: false, shopScoped: false },
   "settings:write": { ownerOnly: true, shopScoped: false },

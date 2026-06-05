@@ -8,7 +8,8 @@ export type LoginEvent =
   | { type: "password_rejected" }
   | { type: "code_accepted" }
   | { type: "code_rejected" }
-  | { type: "code_resent" };
+  | { type: "code_resent" }
+  | { type: "account_deactivated" };
 
 export const initialLoginState: LoginState = { step: "password" };
 
@@ -22,6 +23,12 @@ export function loginReducer(state: LoginState, event: LoginEvent): LoginState {
       };
     case "password_rejected":
       return { step: "password", error: "Incorrect email or password." };
+    case "account_deactivated":
+      return {
+        step: "password",
+        error:
+          "This account has been deactivated. Contact the shop owner to regain access.",
+      };
     case "code_accepted":
       return { step: "authenticated" };
     case "code_rejected":
