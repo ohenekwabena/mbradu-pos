@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  buildCorrectionMovement,
   buildRestockMovement,
+  parseCorrectionInput,
   parseRestockInput,
   quantityFromMovements,
   STOCK_REASONS,
   sumMovements,
+  type CorrectionInput,
   type Movement,
   type RestockInput,
 } from "./stock";
@@ -120,5 +123,100 @@ describe("parseRestockInput", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.amount).toBe(7);
+  });
+});
+
+describe("buildCorrectionMovement", () => {
+  it("constructs a signed 'correction' movement in either direction", () => {
+    expect(buildCorrectionMovement(3)).toEqual({ reason: "correction", amount: 3 });
+    expect(buildCorrectionMovement(-2)).toEqual({ reason: "correction", amount: -2 });
+  });
+
+  it("rejects a zero or fractional amount", () => {
+    expect(() => buildCorrectionMovement(0)).toThrow();
+    expect(() => buildCorrectionMovement(1.5)).toThrow();
+    expect(() => buildCorrectionMovement(-0.5)).toThrow();
+  });
+
+  it("moves quantity by exactly the signed amount, floored at 0", () => {
+    const before: Movement[] = [
+      { reason: "restock", amount: 5 },
+      { reason: "sale", amount: -1 },
+    ];
+    expect(quantityFromMovements([...before, buildCorrectionMovement(3)])).toBe(
+      quantityFromMovements(before) + 3, // 4 → 7
+    );
+    expect(quantityFromMovements([...before, buildCorrectionMovement(-2)])).toBe(
+      quantityFromMovements(before) - 2, // 4 → 2
+    );
+    // A correction can't be appended past 0 through the RPC, but the floor holds.
+    expect(quantityFromMovements([...before, buildCorrectionMovement(-10)])).toBe(0);
+  });
+});
+
+describe("parseCorrectionInput", () => {
+  const base: CorrectionInput = {
+    itemId: "item-1",
+    shopId: "shop-1",
+    amount: "-2",
+    reason: "Damaged in storage",
+  };
+
+  it("accepts a down correction and normalizes it for the RPC", () => {
+    const result = parseCorrectionInput(base);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toEqual({
+      itemId: "item-1",
+      shopId: "shop-1",
+      amount: -2,
+      reason: "Damaged in storage",
+    });
+  });
+
+  it("accepts an up correction — bare digits, a leading +, or padded", () => {
+    expect(parseCorrectionInput({ ...base, amount: "4" })).toMatchObject({
+      ok: true,
+      value: { amount: 4 },
+    });
+    expect(parseCorrectionInput({ ...base, amount: "+4" })).toMatchObject({
+      ok: true,
+      value: { amount: 4 },
+    });
+    expect(parseCorrectionInput({ ...base, amount: "  -07 " })).toMatchObject({
+      ok: true,
+      value: { amount: -7 },
+    });
+  });
+
+  it("requires an item and a shop to be chosen", () => {
+    expect(parseCorrectionInput({ ...base, itemId: "  " })).toEqual({
+      ok: false,
+      error: "Choose an item to correct.",
+    });
+    expect(parseCorrectionInput({ ...base, shopId: "" })).toEqual({
+      ok: false,
+      error: "Choose a shop to correct.",
+    });
+  });
+
+  it("rejects a zero, fractional, or non-numeric amount", () => {
+    for (const amount of ["0", "+0", "-0", "2.5", "ten", "1e3", "", "  "]) {
+      expect(parseCorrectionInput({ ...base, amount }).ok).toBe(false);
+    }
+  });
+
+  it("requires a reason — a correction must be justified", () => {
+    expect(parseCorrectionInput({ ...base, reason: "   " })).toEqual({
+      ok: false,
+      error: "Add a reason for the correction.",
+    });
+  });
+
+  it("trims the reason", () => {
+    expect(parseCorrectionInput({ ...base, reason: "  miscount fix  " })).toMatchObject({
+      ok: true,
+      value: { reason: "miscount fix" },
+    });
   });
 });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 
 import { Icon } from "@/components/icon";
 import {
@@ -14,7 +15,8 @@ import {
 } from "@/lib/catalog";
 import { format } from "@/lib/money";
 
-import { recordRestock, saveItem, saveProduct, type ItemFormState } from "./actions";
+import { saveItem, saveProduct, type ItemFormState } from "./actions";
+import { RestockModal } from "./stock-modals";
 
 export interface CatalogItem {
   id: string;
@@ -255,8 +257,10 @@ function ItemRow({
   return (
     <tr>
       <td>
-        <div className="it-name">{item.name}</div>
-        {sub && <div className="it-attr">{sub}</div>}
+        <Link href={`/inventory/${item.id}`} className="it-link">
+          <div className="it-name">{item.name}</div>
+          {sub && <div className="it-attr">{sub}</div>}
+        </Link>
       </td>
       <td>
         <span className="chip chip-neutral">{CATEGORY_LABEL[item.category]}</span>
@@ -283,6 +287,14 @@ function ItemRow({
           >
             <Icon name="restock" />
           </button>
+          <Link
+            href={`/inventory/${item.id}`}
+            className="row-act"
+            title="History"
+            aria-label={`View ${item.name} stock history`}
+          >
+            <Icon name="history" />
+          </Link>
         </div>
       </td>
     </tr>
@@ -373,136 +385,6 @@ function EmptyCatalog({ onAdd }: { onAdd: (category: Category) => void }) {
 }
 
 const INITIAL: ItemFormState = { status: "idle" };
-
-/**
- * Record-restock modal: add N units of one Item to a Shop's stock, with an
- * optional note. The Shop is locked to the active Shop context when one is set,
- * otherwise chosen from a dropdown (design — Inventory restock). Submits to
- * {@link recordRestock}; the first restock at a Shop makes it begin carrying the
- * Item. The current per-Shop quantity and carried/not-carried status are shown
- * once the inventory list is Shop-aware (MP-21).
- */
-function RestockModal({
-  item,
-  shops,
-  activeShopId,
-  activeShopName,
-  onClose,
-  onSaved,
-}: {
-  item: CatalogItem;
-  shops: Shop[];
-  activeShopId: string | null;
-  activeShopName: string | null;
-  onClose: () => void;
-  onSaved: (message: string) => void;
-}) {
-  const [state, formAction, pending] = useActionState(recordRestock, INITIAL);
-  const lockedShop = activeShopId
-    ? { id: activeShopId, name: activeShopName ?? "This shop" }
-    : null;
-  const noShop = !lockedShop && shops.length === 0;
-  const req = <span style={{ color: "var(--danger)" }}>*</span>;
-
-  useEffect(() => {
-    if (state.status === "success") onSaved(state.message);
-  }, [state, onSaved]);
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  return (
-    <div
-      className="scrim"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="modal" role="dialog" aria-modal="true" aria-label="Record restock">
-        <form action={formAction}>
-          <input type="hidden" name="item_id" value={item.id} />
-          {lockedShop && <input type="hidden" name="shop_id" value={lockedShop.id} />}
-
-          <div className="m-head">
-            <h3 className="h3">Record restock</h3>
-            <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
-              <Icon name="x" />
-            </button>
-          </div>
-
-          <div className="m-body">
-            <p style={{ margin: "0 0 16px" }}>
-              Add units to <strong>{item.name}</strong>
-              {lockedShop ? (
-                <>
-                  {" "}
-                  at <strong>{lockedShop.name}</strong>
-                </>
-              ) : null}
-              .
-            </p>
-
-            <div className="field" style={{ marginBottom: 14 }}>
-              <label>Shop {req}</label>
-              {lockedShop ? (
-                <div className="ro-field">{lockedShop.name}</div>
-              ) : noShop ? (
-                <div className="ro-field">No shops yet — open a shop first.</div>
-              ) : (
-                <select className="input" name="shop_id" defaultValue={shops[0]?.id} required>
-                  {shops.map((shop) => (
-                    <option key={shop.id} value={shop.id}>
-                      {shop.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-
-            <div className="field" style={{ marginBottom: 14 }}>
-              <label>Quantity in {req}</label>
-              <input
-                className="input tnum"
-                name="amount"
-                type="number"
-                min="1"
-                step="1"
-                placeholder="0"
-                autoFocus
-                required
-              />
-            </div>
-
-            <div className="field">
-              <label>Note (optional)</label>
-              <input className="input" name="note" placeholder="e.g. New supplier delivery" />
-            </div>
-
-            {state.status === "error" && (
-              <p className="err" style={{ marginTop: 12 }}>
-                <Icon name="alert" /> {state.message}
-              </p>
-            )}
-          </div>
-
-          <div className="m-actions">
-            <button type="button" className="btn btn-secondary" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="submit" className="btn btn-primary" disabled={pending || noShop}>
-              {pending ? "Recording…" : "Record restock"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
 
 /** One editable shade row in the cosmetic editor (client state, serialized to a
  * hidden field on submit). `key` is a stable React id; `id` is the DB id, present

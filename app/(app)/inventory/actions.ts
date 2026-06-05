@@ -13,7 +13,12 @@ import {
   type ShadeInput,
 } from "@/lib/catalog";
 import { getCurrentProfile } from "@/lib/dal";
-import { parseRestockInput, type RestockInput } from "@/lib/stock";
+import {
+  parseCorrectionInput,
+  parseRestockInput,
+  type CorrectionInput,
+  type RestockInput,
+} from "@/lib/stock";
 import { createClient } from "@/lib/supabase/server";
 
 export type ItemFormState =
@@ -216,5 +221,58 @@ export async function recordRestock(
   return {
     status: "success",
     message: `Stock updated — ${amount} ${amount === 1 ? "unit" : "units"} in`,
+  };
+}
+
+/**
+ * Record a Correction — a signed adjustment to an Item's stock at one Shop to
+ * fix a miscount, breakage, or loss, with a required reason logged to the
+ * append-only ledger. Owner-only: gated here with {@link assertCan} for an early
+ * reject and again by is_owner() inside the SECURITY DEFINER `record_correction`
+ * RPC, the sole write path. The RPC refuses to drive the Shop's quantity below 0
+ * and won't touch an Item the Shop doesn't carry, raising an error this surfaces
+ * verbatim. Input is validated by {@link parseCorrectionInput}; the signed value
+ * is the RPC's `p_amount` and the reason its `p_note`. Bound to the correction
+ * modal via `useActionState`.
+ */
+export async function recordCorrection(
+  _prev: ItemFormState,
+  formData: FormData,
+): Promise<ItemFormState> {
+  const profile = await getCurrentProfile();
+  assertCan(profile, "stock:correct");
+
+  const input: CorrectionInput = {
+    itemId: String(formData.get("item_id") ?? ""),
+    shopId: String(formData.get("shop_id") ?? ""),
+    amount: String(formData.get("amount") ?? ""),
+    reason: String(formData.get("reason") ?? ""),
+  };
+
+  const parsed = parseCorrectionInput(input);
+  if (!parsed.ok) {
+    return { status: "error", message: parsed.error };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("record_correction", {
+    p_item_id: parsed.value.itemId,
+    p_shop_id: parsed.value.shopId,
+    p_amount: parsed.value.amount,
+    p_note: parsed.value.reason,
+  });
+  if (error) return { status: "error", message: error.message };
+
+  revalidatePath("/inventory");
+  revalidatePath(`/inventory/${parsed.value.itemId}`);
+
+  const magnitude = Math.abs(parsed.value.amount);
+  const units = magnitude === 1 ? "unit" : "units";
+  return {
+    status: "success",
+    message:
+      parsed.value.amount > 0
+        ? `Correction recorded — ${magnitude} ${units} added`
+        : `Correction recorded — ${magnitude} ${units} removed`,
   };
 }
