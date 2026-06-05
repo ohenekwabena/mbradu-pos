@@ -47,6 +47,58 @@ export interface Shop {
   name: string;
 }
 
+/** The stock-status kind behind a row's chip. Maps to a chip class in
+ * {@link KIND_CHIP}; the human label is built server-side (it can carry a count,
+ * e.g. "2 shops low/out"). */
+export type StatusKind =
+  | "not-carried"
+  | "out"
+  | "low"
+  | "in"
+  | "expiring"
+  | "out-everywhere"
+  | "shops-low-out";
+
+/** One Item's scope-aware stock view, precomputed server-side for the current
+ * Shop context (so the client stays presentational). */
+export interface ItemStock {
+  /** Carried in the current scope: a row exists at this Shop (single-shop) or at
+   * ≥ 1 Shop (all-shops). */
+  carried: boolean;
+  /** single-shop: quantity here (`null` when not carried). all-shops: total
+   * across carried Shops. */
+  quantity: number | null;
+  /** all-shops: how many Shops carry it (for the "N of M shops" subline). */
+  carriedShopCount: number;
+  statusKind: StatusKind;
+  statusLabel: string;
+  /** Matches the "Low stock" quick filter in the current scope. */
+  lowFlag: boolean;
+  /** Matches the "Expiring soon" quick filter (a cosmetic within the window). */
+  expiringFlag: boolean;
+}
+
+/** A catalog Item plus its scope-aware stock view — one inventory-list row. */
+export interface InventoryItem extends CatalogItem {
+  stock: ItemStock;
+}
+
+/** The Owner's active Shop context, shaping the whole list (ADR-0005). */
+export type InventoryScope =
+  | { mode: "all"; shopCount: number }
+  | { mode: "shop"; shopId: string; shopName: string };
+
+/** Status kind → chip class (labels are supplied by the server view-model). */
+const KIND_CHIP: Record<StatusKind, string> = {
+  "not-carried": "chip-outline",
+  out: "chip-danger",
+  low: "chip-warning",
+  in: "chip-success",
+  expiring: "chip-accent",
+  "out-everywhere": "chip-danger",
+  "shops-low-out": "chip-warning",
+};
+
 type CategoryFilter = "all" | Category;
 
 const FILTERS: { key: CategoryFilter; label: string }[] = [
@@ -55,6 +107,9 @@ const FILTERS: { key: CategoryFilter; label: string }[] = [
   { key: "cosmetic", label: "Cosmetics" },
   { key: "wig_tool", label: "Wig Tools" },
 ];
+
+/** Stock-health quick filters (design — Inventory): off, or one at a time. */
+type QuickFilter = "low" | "exp" | null;
 
 /** What the editor drawer is doing: adding a fresh entry of some category, or
  * editing an existing standalone Item (wig / tool) or cosmetic Product line. */
@@ -67,13 +122,16 @@ export function CatalogView({
   items,
   products,
   shops,
+  scope,
   activeShopId,
   activeShopName,
 }: {
-  items: CatalogItem[];
+  items: InventoryItem[];
   products: CatalogProduct[];
   shops: Shop[];
-  /** The Owner's active Shop context, or `null` on "All shops". */
+  /** The Owner's active Shop context — shapes columns, status, and actions. */
+  scope: InventoryScope;
+  /** The active Shop id/name, or `null` on "All shops" (defaults the modals). */
   activeShopId: string | null;
   activeShopName: string | null;
 }) {
@@ -82,6 +140,7 @@ export function CatalogView({
   const [toast, setToast] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<CategoryFilter>("all");
+  const [quick, setQuick] = useState<QuickFilter>(null);
 
   useEffect(() => {
     if (!toast) return;
@@ -91,12 +150,22 @@ export function CatalogView({
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return items.filter(
+    const rows = items.filter(
       (item) =>
         (filter === "all" || item.category === filter) &&
-        (q === "" || item.name.toLowerCase().includes(q)),
+        (q === "" || item.name.toLowerCase().includes(q)) &&
+        (quick === null ||
+          (quick === "low" && item.stock.lowFlag) ||
+          (quick === "exp" && item.stock.expiringFlag)),
     );
-  }, [items, query, filter]);
+    // On a single Shop, surface the Items it carries above the ones it doesn't.
+    if (scope.mode === "shop") {
+      return rows
+        .slice()
+        .sort((a, b) => Number(b.stock.carried) - Number(a.stock.carried));
+    }
+    return rows;
+  }, [items, query, filter, quick, scope.mode]);
 
   function openAdd(category: Category) {
     setTarget({ mode: "add", category });
@@ -131,8 +200,17 @@ export function CatalogView({
       ) : (
         <>
           <div className="scope-note">
-            <Icon name="box" /> The business-wide catalog — cost and price are the
-            same at every shop. Stock is tracked per shop.
+            {scope.mode === "shop" ? (
+              <>
+                <Icon name="store" /> Showing <strong>{scope.shopName}</strong> — switch
+                shops in the top bar. Catalog &amp; prices are business-wide.
+              </>
+            ) : (
+              <>
+                <Icon name="dashboard" /> Showing <strong>all shops</strong> combined.
+                Pick a shop in the top bar to see and edit one shop&rsquo;s stock.
+              </>
+            )}
           </div>
 
           <div className="inv-toolbar">
@@ -156,6 +234,22 @@ export function CatalogView({
                   {f.label}
                 </button>
               ))}
+            </div>
+            <div className="pills">
+              <button
+                type="button"
+                className={"pill" + (quick === "low" ? " active" : "")}
+                onClick={() => setQuick((q) => (q === "low" ? null : "low"))}
+              >
+                Low stock
+              </button>
+              <button
+                type="button"
+                className={"pill" + (quick === "exp" ? " active" : "")}
+                onClick={() => setQuick((q) => (q === "exp" ? null : "exp"))}
+              >
+                Expiring soon
+              </button>
             </div>
             <div style={{ flex: 1 }} />
             <AddMenu onAdd={openAdd} />
@@ -183,6 +277,8 @@ export function CatalogView({
                       <th>Category</th>
                       <th className="num">Cost</th>
                       <th className="num">Price</th>
+                      <th className="num">{scope.mode === "shop" ? "Qty here" : "Total qty"}</th>
+                      <th>Status</th>
                       <th aria-label="Actions" />
                     </tr>
                   </thead>
@@ -191,6 +287,7 @@ export function CatalogView({
                       <ItemRow
                         key={item.id}
                         item={item}
+                        scope={scope}
                         onEdit={() => openEdit(item)}
                         onRestock={() => setRestockItem(item)}
                       />
@@ -243,17 +340,25 @@ function subline(item: CatalogItem): string {
   return attributeSummary(item.category, item.attributes);
 }
 
-/** One catalog Item as a flat table row — wig, wig tool, or a single cosmetic shade. */
+/** One catalog Item as a flat table row — wig, wig tool, or a single cosmetic
+ * shade — with its scope-aware quantity, status, and actions. */
 function ItemRow({
   item,
+  scope,
   onEdit,
   onRestock,
 }: {
-  item: CatalogItem;
+  item: InventoryItem;
+  scope: InventoryScope;
   onEdit: () => void;
   onRestock: () => void;
 }) {
   const sub = subline(item);
+  const { stock } = item;
+  // In a single Shop, an Item it doesn't carry yet gets a "Stock here" action —
+  // the first restock starts the Shop carrying it (CONTEXT.md).
+  const stockHereOnly = scope.mode === "shop" && !stock.carried;
+
   return (
     <tr>
       <td>
@@ -267,35 +372,63 @@ function ItemRow({
       </td>
       <td className="num tnum text-muted">{item.cost == null ? "—" : format(item.cost)}</td>
       <td className="num tnum">{format(item.price)}</td>
+      <td className="num tnum">
+        {stock.quantity === null ? (
+          <span className="text-faint">—</span>
+        ) : scope.mode === "all" ? (
+          <>
+            {stock.quantity}
+            <div className="qty-sub">
+              {stock.carriedShopCount} of {scope.shopCount} shops
+            </div>
+          </>
+        ) : (
+          stock.quantity
+        )}
+      </td>
+      <td>
+        <span className={"chip " + KIND_CHIP[stock.statusKind]}>{stock.statusLabel}</span>
+      </td>
       <td className="num">
-        <div className="row-actions">
+        {stockHereOnly ? (
           <button
             type="button"
-            className="row-act"
-            title="Edit"
-            aria-label={`Edit ${item.name}`}
-            onClick={onEdit}
-          >
-            <Icon name="edit" />
-          </button>
-          <button
-            type="button"
-            className="row-act"
-            title="Restock"
-            aria-label={`Restock ${item.name}`}
+            className="btn btn-ghost btn-sm"
+            title="Restock to start carrying this item"
             onClick={onRestock}
           >
-            <Icon name="restock" />
+            <Icon name="plus" /> Stock here
           </button>
-          <Link
-            href={`/inventory/${item.id}`}
-            className="row-act"
-            title="History"
-            aria-label={`View ${item.name} stock history`}
-          >
-            <Icon name="history" />
-          </Link>
-        </div>
+        ) : (
+          <div className="row-actions">
+            <button
+              type="button"
+              className="row-act"
+              title="Edit"
+              aria-label={`Edit ${item.name}`}
+              onClick={onEdit}
+            >
+              <Icon name="edit" />
+            </button>
+            <button
+              type="button"
+              className="row-act"
+              title="Restock"
+              aria-label={`Restock ${item.name}`}
+              onClick={onRestock}
+            >
+              <Icon name="restock" />
+            </button>
+            <Link
+              href={`/inventory/${item.id}`}
+              className="row-act"
+              title="History"
+              aria-label={`View ${item.name} stock history`}
+            >
+              <Icon name="history" />
+            </Link>
+          </div>
+        )}
       </td>
     </tr>
   );

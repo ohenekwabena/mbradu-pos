@@ -3,10 +3,12 @@ import { describe, it, expect } from "vitest";
 import {
   buildCorrectionMovement,
   buildRestockMovement,
+  isExpiringSoon,
   parseCorrectionInput,
   parseRestockInput,
   quantityFromMovements,
   STOCK_REASONS,
+  stockStatus,
   sumMovements,
   type CorrectionInput,
   type Movement,
@@ -218,5 +220,69 @@ describe("parseCorrectionInput", () => {
       ok: true,
       value: { reason: "miscount fix" },
     });
+  });
+});
+
+describe("stockStatus", () => {
+  it("is 'out' only when nothing is on hand (carried but 0)", () => {
+    expect(stockStatus(0, 5)).toBe("out");
+    // defensive: a negative can't occur (quantity is floored), but reads as out
+    expect(stockStatus(-1, 5)).toBe("out");
+  });
+
+  it("is 'low' from 1 up to and including the threshold", () => {
+    expect(stockStatus(1, 5)).toBe("low");
+    expect(stockStatus(5, 5)).toBe("low"); // at the threshold is still low
+  });
+
+  it("is 'in' above the threshold", () => {
+    expect(stockStatus(6, 5)).toBe("in");
+    expect(stockStatus(100, 5)).toBe("in");
+  });
+
+  it("treats a threshold of 0 as: 0 → out, anything ≥ 1 → in (nothing is low)", () => {
+    expect(stockStatus(0, 0)).toBe("out");
+    expect(stockStatus(1, 0)).toBe("in");
+  });
+});
+
+describe("isExpiringSoon", () => {
+  const TODAY = "2026-06-05";
+  const WINDOW = 30;
+
+  it("flags a cosmetic expiring within the window (inclusive of the last day)", () => {
+    expect(isExpiringSoon("2026-06-20", TODAY, WINDOW)).toBe(true); // 15 days out
+    expect(isExpiringSoon("2026-07-05", TODAY, WINDOW)).toBe(true); // exactly 30 days out
+  });
+
+  it("does not flag a cosmetic expiring beyond the window", () => {
+    expect(isExpiringSoon("2026-07-06", TODAY, WINDOW)).toBe(false); // 31 days out
+    expect(isExpiringSoon("2027-01-01", TODAY, WINDOW)).toBe(false);
+  });
+
+  it("still flags an already-expired date (no separate 'expired' state in v1)", () => {
+    expect(isExpiringSoon("2026-06-04", TODAY, WINDOW)).toBe(true); // yesterday
+    expect(isExpiringSoon("2025-01-01", TODAY, WINDOW)).toBe(true);
+  });
+
+  it("flags an item expiring today", () => {
+    expect(isExpiringSoon(TODAY, TODAY, WINDOW)).toBe(true);
+  });
+
+  it("never flags an Item with no expiry (wig / wig tool / missing field)", () => {
+    expect(isExpiringSoon(null, TODAY, WINDOW)).toBe(false);
+    expect(isExpiringSoon(undefined, TODAY, WINDOW)).toBe(false);
+    expect(isExpiringSoon("", TODAY, WINDOW)).toBe(false);
+  });
+
+  it("treats a malformed or impossible date as not expiring (fails safe)", () => {
+    expect(isExpiringSoon("not-a-date", TODAY, WINDOW)).toBe(false);
+    expect(isExpiringSoon("2026-02-30", TODAY, WINDOW)).toBe(false); // impossible day
+    expect(isExpiringSoon("2026-13-01", TODAY, WINDOW)).toBe(false); // impossible month
+  });
+
+  it("respects the window size — a wider window flags later dates", () => {
+    expect(isExpiringSoon("2026-08-01", TODAY, 30)).toBe(false);
+    expect(isExpiringSoon("2026-08-01", TODAY, 90)).toBe(true);
   });
 });

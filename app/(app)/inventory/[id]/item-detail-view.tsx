@@ -12,7 +12,7 @@ import {
   type Category,
 } from "@/lib/catalog";
 import { format } from "@/lib/money";
-import { type StockReason } from "@/lib/stock";
+import { stockStatus, type StockReason, type StockStatus } from "@/lib/stock";
 
 import { CorrectionModal, RestockModal, type CarriedStock } from "../stock-modals";
 
@@ -58,6 +58,13 @@ const REASON_META: Record<StockReason, { label: string; chip: string }> = {
   correction: { label: "Correction", chip: "chip-warning" },
 };
 
+/** Per-Shop stock-health chip on the stock-by-shop cards (MP-21). */
+const STATUS_META: Record<StockStatus, { label: string; chip: string }> = {
+  out: { label: "Out of stock", chip: "chip-danger" },
+  low: { label: "Low", chip: "chip-warning" },
+  in: { label: "In stock", chip: "chip-success" },
+};
+
 /** "all" Shops, or a single carried Shop id. */
 type LedgerFilter = "all" | string;
 
@@ -66,6 +73,8 @@ export function ItemDetailView({
   shops,
   carriedStock,
   ledger,
+  lowStockThreshold,
+  expiringSoon,
   activeShopId,
   activeShopName,
 }: {
@@ -73,6 +82,10 @@ export function ItemDetailView({
   shops: Shop[];
   carriedStock: CarriedStock[];
   ledger: LedgerEntry[];
+  /** Business-wide low-stock threshold — drives the per-Shop status chips. */
+  lowStockThreshold: number;
+  /** Whether this Item (a cosmetic) is within the expiry-warning window. */
+  expiringSoon: boolean;
   activeShopId: string | null;
   activeShopName: string | null;
 }) {
@@ -119,6 +132,7 @@ export function ItemDetailView({
             <div className="row gap-12" style={{ alignItems: "center", flexWrap: "wrap" }}>
               <h2 className="h2">{item.name}</h2>
               <span className="chip chip-neutral">{CATEGORY_LABEL[item.category]}</span>
+              {expiringSoon && <span className="chip chip-accent">Expiring soon</span>}
             </div>
             <div className="specs">
               <Spec k="Selling price" v={format(item.price)} />
@@ -157,12 +171,28 @@ export function ItemDetailView({
         <div className="shop-stock">
           {shops.map((s) => {
             const carried = carriedStock.find((c) => c.shopId === s.id);
-            return (
-              <div key={s.id} className={"ss-card" + (carried ? "" : " nc")}>
-                <div className="nm">
-                  <Icon name="store" /> {s.name}
+            if (!carried) {
+              return (
+                <div key={s.id} className="ss-card nc">
+                  <div className="nm">
+                    <Icon name="store" /> {s.name}
+                  </div>
+                  <div className="q">Not carried</div>
                 </div>
-                <div className="q">{carried ? carried.quantity : "Not carried"}</div>
+              );
+            }
+            const status = STATUS_META[stockStatus(carried.quantity, lowStockThreshold)];
+            return (
+              <div key={s.id} className="ss-card">
+                <div>
+                  <div className="nm">
+                    <Icon name="store" /> {s.name}
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <span className={"chip " + status.chip}>{status.label}</span>
+                  </div>
+                </div>
+                <div className="q">{carried.quantity}</div>
               </div>
             );
           })}

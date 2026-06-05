@@ -867,6 +867,13 @@ table.tbl tr:last-child td {
   font-size: 12px;
   margin-top: 2px;
 }
+/* Faint "N of M shops" subline under the all-shops total-qty cell (MP-21). */
+.qty-sub {
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 400;
+  margin-top: 2px;
+}
 /* Two-column field grid for the item editor; collapses on a narrow drawer. */
 .attr-grid {
   display: grid;
@@ -2255,5 +2262,36 @@ table.tbl tr:last-child td {
   }
   @page {
     margin: 12mm;
+  }
+}
+
+/* ============================================================
+   Settings (MP-21) — business-wide preferences
+   ============================================================ */
+.set-card {
+  max-width: 640px;
+}
+.set-row {
+  display: grid;
+  grid-template-columns: 1fr 200px;
+  gap: 24px;
+  align-items: center;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line);
+}
+.set-row:last-of-type {
+  border-bottom: none;
+}
+.set-row .k {
+  font-weight: 500;
+}
+.set-row .d {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 2px;
+}
+@media (max-width: 600px) {
+  .set-row {
+    grid-template-columns: 1fr;
   }
 }
