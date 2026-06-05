@@ -5,6 +5,7 @@ import { getPendingInvitations, getStaffRoster } from "@/lib/staff";
 import { createClient } from "@/lib/supabase/server";
 
 import { InvitationsPanel, type ShopOption } from "./invitations-panel";
+import { ReassignShopButton } from "./reassign-shop-button";
 import { ResetPasswordButton } from "./reset-password-button";
 
 function initials(name: string): string {
@@ -99,6 +100,12 @@ export default async function StaffPage() {
                           <ResetPasswordButton
                             name={member.name}
                             email={member.email}
+                          />
+                          <ReassignShopButton
+                            cashierId={member.id}
+                            name={member.name}
+                            currentShopId={member.shopId}
+                            shops={shops}
                           />
                         </div>
                       )}
