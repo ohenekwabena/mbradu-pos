@@ -2099,6 +2099,12 @@ table.tbl tr:last-child td {
 .cart .stepper .val {
   width: 34px;
 }
+.pay-methods {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
 .pay-row {
   display: flex;
   align-items: center;

@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 
 import { assertCan } from "@/lib/auth/visibility";
 import { getCurrentProfile } from "@/lib/dal";
-import { parseSaleInput, type SaleLineInput } from "@/lib/sale";
+import { parseSaleInput, type PaymentInput, type PaymentMethod, type SaleLineInput } from "@/lib/sale";
 import { ALL_SHOPS } from "@/lib/shop-context";
 import { readShopScope } from "@/lib/shop-context-server";
 import { createClient } from "@/lib/supabase/server";
@@ -21,16 +21,18 @@ interface CartEntry {
 }
 
 /**
- * Complete a cash sale at the current Shop. A Cashier sells at their own Shop;
- * the Owner sells at their active Shop context (never "all"). The cart arrives as
- * a JSON array of `{ itemId, quantity }`; prices and on-hand stock are re-read
- * **server-side** (never trusted from the client) to build the validated payload,
- * which {@link parseSaleInput} checks (non-empty, whole quantities, carried, no
- * oversell, cash ≥ total). The write goes through the atomic, authorization-
- * checked `complete_sale` RPC — the final authority — which decrements stock,
- * writes one Sale + a line item + a Sale movement per line, and records the cash
- * payment, all in one transaction. On success we redirect to the immutable
- * receipt. Bound to the sell form via `useActionState`.
+ * Complete a sale at the current Shop. A Cashier sells at their own Shop; the
+ * Owner sells at their active Shop context (never "all"). The cart arrives as a
+ * JSON array of `{ itemId, quantity }` and the payments as a JSON array of
+ * `{ method, amount }` (split across Cash/MoMo/Card/Transfer); prices and on-hand
+ * stock are re-read **server-side** (never trusted from the client) to build the
+ * validated payload, which {@link parseSaleInput} checks (non-empty, whole
+ * quantities, carried, no oversell, payments sum to the total). The write goes
+ * through the atomic, authorization-checked `complete_sale` RPC — the final
+ * authority — which decrements stock, writes one Sale + a line item + a Sale
+ * movement per line, and records each payment (one row per method), all in one
+ * transaction. On success we redirect to the immutable receipt. Bound to the
+ * sell form via `useActionState`.
  */
 export async function completeSale(
   _prev: SaleFormState,
@@ -73,6 +75,22 @@ export async function completeSale(
     return { status: "error", message: "Add at least one item to the sale." };
   }
 
+  // The payments: a JSON array of { method, amount } the sell screen serializes.
+  // The amounts are the cashier's own figures (how the customer settled); only
+  // their methods and that they sum to the total are validated (in parseSaleInput).
+  let rawPayments: unknown;
+  try {
+    rawPayments = JSON.parse(String(formData.get("payments") ?? "[]"));
+  } catch {
+    return { status: "error", message: "Couldn’t read the payment — please try again." };
+  }
+  const payments: PaymentInput[] = Array.isArray(rawPayments)
+    ? rawPayments.map((entry) => {
+        const row = (entry ?? {}) as Record<string, unknown>;
+        return { method: String(row.method ?? "") as PaymentMethod, amount: String(row.amount ?? "") };
+      })
+    : [];
+
   // Resolve each line's authoritative unit price + on-hand stock at this Shop.
   // Price comes from the cost-masking items_catalog (price is visible to all);
   // availability from this Shop's shop_stock — a missing row means "not carried".
@@ -103,6 +121,7 @@ export async function completeSale(
     shopId,
     customer: String(formData.get("customer") ?? ""),
     lines,
+    payments,
     tendered: String(formData.get("tendered") ?? ""),
   });
   if (!parsed.ok) {
@@ -124,6 +143,8 @@ export async function completeSale(
   revalidatePath("/inventory");
 
   // Hand off to the immutable receipt. The cash tendered isn't persisted (only
-  // the payment, which equals the total), so it rides along for the change line.
-  redirect(`/sales/${saleId}?tendered=${parsed.value.tendered}`);
+  // the payments, which sum to the total), so it rides along for the change line —
+  // but only when some cash was taken (a cashless sale has no change to show).
+  const hasCash = parsed.value.payments.some((payment) => payment.method === "cash");
+  redirect(hasCash ? `/sales/${saleId}?tendered=${parsed.value.tendered}` : `/sales/${saleId}`);
 }

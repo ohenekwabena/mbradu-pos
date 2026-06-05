@@ -1,9 +1,10 @@
 /**
- * Sale-builder domain — the pure logic of a cash sale in progress: a cart of
+ * Sale-builder domain — the pure logic of a sale in progress: a cart of
  * *(Item, quantity)* lines drawn from a single Shop, its line and grand totals
  * in pesewas, the **no-oversell** guard against each Item's on-hand stock at
- * that Shop, the cash **change due**, and the validation that turns the cart
- * into the payload the `complete_sale` RPC accepts.
+ * that Shop, the set of **payments** that settle it (one or more methods that
+ * must sum to the total), the cash **change due**, and the validation that turns
+ * the cart into the payload the `complete_sale` RPC accepts.
  *
  * Deliberately free of any server/Supabase imports (like the Money, Catalog, and
  * Stock modules) so the Server Action that completes a sale, the sell screen, and
@@ -12,41 +13,61 @@
  * which is the source of truth: it re-reads each unit price server-side, re-checks
  * carried-Item and no-oversell under a row lock, and refuses any payment set that
  * doesn't sum to the total. This module is its application-layer mirror — the
- * total it computes here (to anchor the cash payment and the change) must equal
- * the total the RPC computes from the same `items.price_pesewas`, or the RPC
- * rejects the sale.
+ * total it computes here (to anchor the payments and the change) must equal the
+ * total the RPC computes from the same `items.price_pesewas`, or the RPC rejects
+ * the sale.
  *
  * Prices and availability are **never trusted from the client**: the Server
  * Action enriches each cart line with the authoritative `unitPrice` and
  * `available` it loads from `items_catalog` + `shop_stock` before calling
  * {@link parseSaleInput}. This module reasons only over those server-resolved
- * facts.
+ * facts. The payment amounts, by contrast, are the cashier's own figures (how the
+ * customer settled), validated only to sum to the total.
  *
- * MP-22 ships the cash sell flow; MP-23 extends the payment side to split &
- * multi-method payments (the {@link PaymentMethod} set is already the full DB
- * enum, but the cash flow only ever builds a single `cash` payment).
+ * MP-22 shipped the cash-only flow (a single `cash` payment for the whole total);
+ * MP-23 extends the payment side to **split & multi-method** payments — any mix of
+ * Cash / MoMo / Card / Transfer whose amounts add up to the total (see
+ * {@link parsePayments}). Cash keeps its over-tender → {@link changeDue} behaviour
+ * for the portion settled in cash.
  */
 
-import { multiply, subtract, sum, tryParse, type Pesewas } from "@/lib/money";
+import { format, multiply, subtract, sum, tryParse, type Pesewas } from "@/lib/money";
 
 /**
  * How a sale was paid — mirrors the `payments.method` CHECK and CONTEXT.md.
- * v1 settles in cash (MP-22); MoMo / Card / Transfer and split payments arrive
- * with MP-23, but the type is the full enum from the start so the payload shape
- * never has to change.
+ * A sale settles in any mix of these whose amounts sum to the total.
  */
 export const PAYMENT_METHODS = ["cash", "momo", "card", "transfer"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
+/** Human label per payment method — the picker, the receipt, and error messages
+ * all read from here so the wording stays in one place. */
+export const METHOD_LABEL: Record<PaymentMethod, string> = {
+  cash: "Cash",
+  momo: "MoMo",
+  card: "Card",
+  transfer: "Transfer",
+};
+
 /**
  * One payment toward a sale, in the exact shape the `complete_sale` RPC reads
  * from its `p_payments` jsonb (`method`, `amount_pesewas`). The RPC requires the
- * payments to sum to the sale total; the cash flow builds exactly one of these
- * for the whole total (see {@link buildCashPayment}).
+ * payments to sum to the sale total; {@link parsePayments} enforces the same in
+ * the app so the cashier gets an instant error instead of a round-trip.
  */
 export interface Payment {
   method: PaymentMethod;
   amount_pesewas: Pesewas;
+}
+
+/**
+ * One payment row as the cashier enters it on the sell screen: a chosen method
+ * and the amount charged to it, a GH₵/decimal string (e.g. "100" or "100.00").
+ * Normalized into a {@link Payment} by {@link parsePayments}.
+ */
+export interface PaymentInput {
+  method: PaymentMethod;
+  amount: string;
 }
 
 /**
@@ -67,41 +88,33 @@ interface PricedLine {
 /**
  * The grand total of a cart: the sum of every line's {@link lineSubtotal}, in
  * pesewas. Empty cart totals to `0`. Used live by the sell screen as quantities
- * change and to anchor the cash payment; the `complete_sale` RPC computes the
- * same figure from server-side prices and is the final authority.
+ * change and to anchor the payments; the `complete_sale` RPC computes the same
+ * figure from server-side prices and is the final authority.
  */
 export function saleTotal(lines: readonly PricedLine[]): Pesewas {
   return sum(lines.map((line) => lineSubtotal(line.unitPrice, line.quantity)));
 }
 
+/** The sum of a payment set's amounts, in pesewas — what must equal the sale
+ * total before the sale can complete. Empty set sums to `0`. */
+export function paymentsTotal(payments: readonly Payment[]): Pesewas {
+  return sum(payments.map((payment) => payment.amount_pesewas));
+}
+
 /**
- * The cash balance of a tender against the total: `tendered − total`, in
- * pesewas. **Signed**, so one value drives the whole live indicator:
+ * The cash balance of a tender against what is owed in cash: `tendered − owed`,
+ * in pesewas. **Signed**, so one value drives the whole live indicator:
  *   - `> 0` — change to hand back to the customer;
  *   - `0`   — exact money, nothing owed either way;
  *   - `< 0` — the tender is short by this much (still owed).
  *
- * The receipt shows the positive case as "Change". A cash sale can't be
- * completed while this is negative — {@link parseSaleInput} rejects a short
- * tender, and the sell screen disables the complete button.
+ * `owed` is the amount charged to **cash** (the cash row of a split, or the whole
+ * total for a cash-only sale), not necessarily the grand total — in a split sale
+ * the customer only tenders cash for the cash portion. The receipt shows the
+ * positive case as "Change".
  */
-export function changeDue(total: Pesewas, tendered: Pesewas): Pesewas {
-  return subtract(tendered, total);
-}
-
-/**
- * The single cash {@link Payment} that settles a whole sale: method `"cash"`
- * with the sale total as `amount_pesewas`. The payment recorded is the **total**,
- * not the cash tendered — the over-tender becomes {@link changeDue}, never a
- * payment row (the RPC requires payments to sum to exactly the total). Throws on
- * a negative or non-integer total (a programming error; the total comes from
- * {@link saleTotal}).
- */
-export function buildCashPayment(total: Pesewas): Payment {
-  if (!Number.isInteger(total) || total < 0) {
-    throw new RangeError(`a cash payment total must be a non-negative integer, got ${total}`);
-  }
-  return { method: "cash", amount_pesewas: total };
+export function changeDue(owed: Pesewas, tendered: Pesewas): Pesewas {
+  return subtract(tendered, owed);
 }
 
 /**
@@ -120,13 +133,23 @@ export interface SaleLineInput {
   available: number | null;
 }
 
-/** Raw sell-form input: the chosen Shop, the cart, an optional customer, and the
- * cash tendered as a GH₵ string (e.g. "120" or "120.00"). */
+/** Raw sell-form input: the chosen Shop, the cart, an optional customer, the
+ * payments that settle the sale, and the cash tendered as a GH₵ string. */
 export interface SaleInput {
   shopId: string;
   customer: string;
   lines: SaleLineInput[];
-  /** Cash received from the customer, a GH₵/decimal string. */
+  /**
+   * One row per chosen method; amounts are GH₵ strings and must sum to the
+   * total. A method toggled on but left blank/zero is ignored (not an error), so
+   * the common one-method sale is just a single row.
+   */
+  payments: PaymentInput[];
+  /**
+   * Cash physically handed over, a GH₵ string — drives the change shown for the
+   * cash portion. Optional: blank means no change was computed (e.g. an exact or
+   * fully cashless sale).
+   */
   tendered: string;
 }
 
@@ -151,6 +174,59 @@ export type SaleParseResult =
   | { ok: true; value: SaleWrite }
   | { ok: false; error: string };
 
+export type PaymentsParseResult =
+  | { ok: true; payments: Payment[]; cashApplied: Pesewas }
+  | { ok: false; error: string };
+
+/**
+ * Validate the cashier's payment rows against the sale total and normalize them
+ * into the `Payment[]` the `complete_sale` RPC reads. Mirrors — early, in the
+ * app — the RPC's rule that the payments must sum to **exactly** the total:
+ *   - each row's method must be one of {@link PAYMENT_METHODS};
+ *   - each amount must parse as a non-negative GH₵ value; a blank/zero row is a
+ *     method toggled on but left unused and is dropped (not an error);
+ *   - at least one paying row must remain;
+ *   - the kept amounts must sum to the total — short or over is rejected with a
+ *     message naming the gap.
+ *
+ * Also returns the **cash applied** (sum of the cash rows) so the caller can
+ * compute the change against what was charged to cash, not the whole total.
+ * Pure; the directly-tested core of the split-payment rule.
+ */
+export function parsePayments(inputs: readonly PaymentInput[], total: Pesewas): PaymentsParseResult {
+  const payments: Payment[] = [];
+  for (const row of inputs) {
+    if (!PAYMENT_METHODS.includes(row.method)) {
+      return { ok: false, error: "Choose a valid payment method." };
+    }
+    const raw = row.amount.trim();
+    if (raw === "") continue; // toggled on but left blank — pays nothing
+    const amount = tryParse(raw);
+    if (amount === null || amount < 0) {
+      return { ok: false, error: `Enter a valid amount for ${METHOD_LABEL[row.method]}.` };
+    }
+    if (amount === 0) continue; // an explicit zero also pays nothing
+    payments.push({ method: row.method, amount_pesewas: amount });
+  }
+
+  if (payments.length === 0) {
+    return { ok: false, error: "Enter how the sale was paid." };
+  }
+
+  const paid = paymentsTotal(payments);
+  if (paid < total) {
+    return { ok: false, error: `Payments are ${format(subtract(total, paid))} short of the total.` };
+  }
+  if (paid > total) {
+    return { ok: false, error: `Payments are ${format(subtract(paid, total))} over the total.` };
+  }
+
+  const cashApplied = sum(
+    payments.filter((payment) => payment.method === "cash").map((payment) => payment.amount_pesewas),
+  );
+  return { ok: true, payments, cashApplied };
+}
+
 /** A line's display name for an error message, or a generic fallback. */
 function lineLabel(line: SaleLineInput): string {
   const name = line.name?.trim();
@@ -170,9 +246,11 @@ function lineLabel(line: SaleLineInput): string {
  *     ("not carried"), separately from being out of / low on stock;
  *   - no line may exceed the Item's `available` stock (the **no-oversell**
  *     guard — selling at the boundary, quantity == available, is allowed);
- *   - the cash tendered must parse and be **at least** the total (a cash sale
- *     can't be completed short); the recorded payment is the total, and the
- *     over-tender becomes the change.
+ *   - the payments must sum to the total (see {@link parsePayments}).
+ *
+ * The cash **change** is the over-tender against the cash portion only
+ * (`tendered − cash applied`, never negative); it isn't a payment row and isn't
+ * sent to the RPC — it rides along for the receipt.
  *
  * Pure (no I/O): the unit-tested core the Server Action wraps before the
  * authorization-checked, atomic `complete_sale` RPC, which re-validates all of
@@ -227,13 +305,16 @@ export function parseSaleInput(input: SaleInput): SaleParseResult {
 
   const total = saleTotal(priced);
 
+  const paymentsResult = parsePayments(input.payments, total);
+  if (!paymentsResult.ok) return { ok: false, error: paymentsResult.error };
+  const { payments, cashApplied } = paymentsResult;
+
+  // Change is the over-tender on the cash portion only; 0 when no cash was taken
+  // or no tender was entered. A short tender clamps to 0 (the cash row already
+  // records what's owed) — it doesn't block completion, since the payments balance.
   const tendered = parseTender(input.tendered);
-  if (tendered === null) {
-    return { ok: false, error: "Enter the cash received from the customer." };
-  }
-  if (tendered < total) {
-    return { ok: false, error: "Cash received is less than the total." };
-  }
+  const change =
+    tendered !== null && cashApplied > 0 ? Math.max(0, changeDue(cashApplied, tendered)) : 0;
 
   const customerText = input.customer.trim();
   const customer = customerText === "" ? null : customerText;
@@ -244,19 +325,22 @@ export function parseSaleInput(input: SaleInput): SaleParseResult {
       shopId,
       customer,
       lines,
-      payments: [buildCashPayment(total)],
+      payments,
       total,
-      tendered,
-      change: changeDue(total, tendered),
+      // For the receipt's change line: the cash tendered when given, else the
+      // cash charged (so change reads 0) — irrelevant when the sale took no cash.
+      tendered: tendered ?? cashApplied,
+      change,
     },
   };
 }
 
 /**
- * Parse the cash-tendered field into integer pesewas, or `null` when it isn't a
- * valid non-negative amount. Uses the Money module's tolerant {@link tryParse}
- * (accepts "GH₵", commas, spaces) but rejects a blank or a negative tender,
- * which can't be a cash payment.
+ * Parse the cash-tendered field into integer pesewas, or `null` when it's blank
+ * or not a valid non-negative amount. Uses the Money module's tolerant
+ * {@link tryParse} (accepts "GH₵", commas, spaces). A blank or negative tender
+ * yields `null` — it simply means no change is computed, which is fine: the
+ * tender is a cash-handling aid, not a gate on completion.
  */
 function parseTender(raw: string): Pesewas | null {
   if (raw.trim() === "") return null;
