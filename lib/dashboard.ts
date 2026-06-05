@@ -2,9 +2,10 @@
  * Dashboard view-model — the **pure transform** from a window of Sales, the
  * per-Shop stock, the catalog, the business-wide settings, the acting **role**,
  * and the active **Shop scope** into the figures the dashboard renders: today's
- * sales count and revenue, the revenue trend (by week / by month), the payment
- * mix, stock health (low / out / expiring), a recent-sales feed, and — for the
- * Owner only — cost of goods, gross profit / margin, and on-hand inventory value.
+ * sales count and revenue, the revenue trend (by week / by month), the by-Shop
+ * revenue comparison (in the all-Shops rollup), the payment mix, stock health
+ * (low / out / expiring), a recent-sales feed, and — for the Owner only — cost
+ * of goods, gross profit / margin, and on-hand inventory value.
  *
  * Like the Money, Sale, Stock, and Settings modules it sits beside, this file is
  * deliberately free of any server / Supabase import, so the dashboard Server
@@ -24,7 +25,9 @@
  * **Scope.** The Owner's dashboard defaults to the all-Shops rollup (`mode:
  * "all"`) and can be scoped to a single Shop (`mode: "shop"`) via the Shop-context
  * switcher; a Cashier is always scoped to their Shop. Scope filters the Sales and
- * stock the figures are computed from.
+ * stock the figures are computed from. In the all-Shops rollup the Owner also
+ * gets a by-Shop revenue comparison ({@link DashboardViewModel.shopComparison});
+ * it is empty under a single-Shop scope.
  *
  * **Determinism.** `today` is passed in as a UTC `YYYY-MM-DD` string (the caller
  * stamps it server-side — the business runs in Ghana / GMT, so the UTC calendar
@@ -148,6 +151,19 @@ export interface PaymentMixSlice {
   share: number;
 }
 
+/**
+ * One Shop's row in the by-Shop revenue comparison: today's revenue and its
+ * share of all Shops' today total. The Owner sees this only in the all-Shops
+ * rollup (there is nothing to compare against from inside one Shop).
+ */
+export interface ShopRevenueEntry {
+  shopId: string;
+  shopName: string;
+  revenuePesewas: Pesewas;
+  /** This Shop's share of all Shops' today revenue, 0–1 (0 when none sold). */
+  share: number;
+}
+
 /** One row of the recent-sales feed. `time` is a UTC 12-hour clock string. */
 export interface RecentSale {
   id: string;
@@ -203,6 +219,10 @@ export interface DashboardViewModel {
   /** Daily revenue for the last 7 days (oldest → today) — drives the KPI spark. */
   revenueSpark: Pesewas[];
   trend: { week: TrendPoint[]; month: TrendPoint[] };
+  /** Today's revenue per Shop, high→low — the all-Shops comparison; empty when
+   * scoped to one Shop. The shares sum to 1 (when any revenue), and the figures
+   * reconcile with {@link today} and each Shop's single-Shop rollup. */
+  shopComparison: ShopRevenueEntry[];
   /** Today's takings by method, canonical order, all four methods present. */
   paymentMix: PaymentMixSlice[];
   stockHealth: {
@@ -298,6 +318,12 @@ export function buildDashboard(input: DashboardInput): DashboardViewModel {
     month: buildMonthTrend(sales, today),
   };
 
+  // --- By-Shop revenue comparison (today) — the all-Shops rollup only, where
+  // `todaySales` / `todayRevenue` span every Shop, so the rows reconcile with the
+  // headline today figure and with each Shop's single-Shop rollup. -----------
+  const shopComparison =
+    scope.mode === "all" ? buildShopComparison(todaySales, input.shops, todayRevenue) : [];
+
   // --- Payment mix (today). ------------------------------------------------
   const paymentMix = buildPaymentMix(todaySales);
 
@@ -314,6 +340,7 @@ export function buildDashboard(input: DashboardInput): DashboardViewModel {
       yesterdayRevenue === 0 ? null : (todayRevenue - yesterdayRevenue) / yesterdayRevenue,
     revenueSpark,
     trend,
+    shopComparison,
     paymentMix,
     stockHealth,
     lowStockCount: stockHealth.low.length,
@@ -354,6 +381,32 @@ function buildPaymentMix(todaySales: readonly DashboardSale[]): PaymentMixSlice[
       share: total === 0 ? 0 : amountPesewas / total,
     };
   });
+}
+
+/** Today's revenue per Shop, high→low, with each Shop's share of the day's
+ * all-Shops total — the by-Shop comparison. Every Shop appears (a Shop with no
+ * sale today is a zero row, sorted last by name), so the rows reconcile exactly
+ * with today's all-Shops revenue and with each Shop's single-Shop rollup. */
+function buildShopComparison(
+  todaySales: readonly DashboardSale[],
+  shops: readonly DashboardShop[],
+  todayRevenue: Pesewas,
+): ShopRevenueEntry[] {
+  const revenueByShop = new Map<string, Pesewas>();
+  for (const sale of todaySales) {
+    revenueByShop.set(sale.shopId, (revenueByShop.get(sale.shopId) ?? 0) + sale.totalPesewas);
+  }
+  return shops
+    .map((shop) => {
+      const revenuePesewas = revenueByShop.get(shop.id) ?? ZERO;
+      return {
+        shopId: shop.id,
+        shopName: shop.name,
+        revenuePesewas,
+        share: todayRevenue === 0 ? 0 : revenuePesewas / todayRevenue,
+      };
+    })
+    .sort((a, b) => b.revenuePesewas - a.revenuePesewas || a.shopName.localeCompare(b.shopName));
 }
 
 /** Classify every carried *(Item, Shop)* position in scope into out / low /

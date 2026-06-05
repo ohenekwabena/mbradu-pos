@@ -320,3 +320,54 @@ describe("buildDashboard — single-Shop scope confines every figure", () => {
     expect(vm.owner!.grossProfitPesewas).toBe(3000);
   });
 });
+
+describe("buildDashboard — by-Shop revenue comparison (all Shops)", () => {
+  it("ranks every Shop by today's revenue, high→low, with shares of the day's total", () => {
+    const vm = buildDashboard(makeInput());
+    // Today: shopA = s1 52000 + s3 8000 = 60000; shopB = s2 4500. Total 64500.
+    expect(vm.shopComparison.map((r) => [r.shopId, r.revenuePesewas])).toEqual([
+      ["shopA", 60000],
+      ["shopB", 4500],
+    ]);
+    expect(vm.shopComparison[0].shopName).toBe("Accra Mall");
+    expect(vm.shopComparison[1].shopName).toBe("Osu Oxford St.");
+
+    expect(vm.shopComparison[0].share).toBeCloseTo(60000 / 64500, 10);
+    expect(vm.shopComparison[1].share).toBeCloseTo(4500 / 64500, 10);
+    // Shares of the day's takings sum to 1.
+    expect(vm.shopComparison.reduce((s, r) => s + r.share, 0)).toBeCloseTo(1, 10);
+  });
+
+  it("reconciles with the all-Shops today revenue (rows sum to the headline)", () => {
+    const vm = buildDashboard(makeInput());
+    const summed = vm.shopComparison.reduce((s, r) => s + r.revenuePesewas, 0);
+    expect(summed).toBe(vm.today.revenuePesewas);
+    expect(summed).toBe(64500);
+  });
+
+  it("each Shop's comparison figure equals that Shop's single-Shop rollup", () => {
+    const all = buildDashboard(makeInput());
+    // The reconciliation guarantee: narrowing scope to a Shop yields the same
+    // today revenue that Shop contributes to the all-Shops comparison.
+    for (const row of all.shopComparison) {
+      const scoped = buildDashboard(makeInput({ scope: { mode: "shop", shopId: row.shopId } }));
+      expect(scoped.today.revenuePesewas).toBe(row.revenuePesewas);
+    }
+  });
+
+  it("includes a Shop with no sales today as a zero row, sorted last", () => {
+    const shops = [...SHOPS, { id: "shopC", name: "Tema Mall" }];
+    const vm = buildDashboard(makeInput({ shops }));
+    expect(vm.shopComparison.map((r) => r.shopId)).toEqual(["shopA", "shopB", "shopC"]);
+    expect(vm.shopComparison[2]).toMatchObject({
+      shopName: "Tema Mall",
+      revenuePesewas: 0,
+      share: 0,
+    });
+  });
+
+  it("is empty under a single-Shop scope (nothing to compare)", () => {
+    const vm = buildDashboard(makeInput({ scope: { mode: "shop", shopId: "shopB" } }));
+    expect(vm.shopComparison).toEqual([]);
+  });
+});
