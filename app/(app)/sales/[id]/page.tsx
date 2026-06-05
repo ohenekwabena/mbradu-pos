@@ -17,9 +17,10 @@ const METHOD_LABEL: Record<string, string> = {
  * A completed sale's receipt — the immutable, printable record (design — Receipt).
  * Server-rendered from the sale, its line items, payments, and Shop; readable by
  * the Owner (any Shop) or the Cashier whose Shop it is (RLS). The cash tendered
- * isn't stored (only the payment, which equals the total), so the change line is
- * driven by an optional `?tendered=` carried over from completion. Re-visiting the
- * permalink later simply omits the change line. MP-22.
+ * isn't stored (only the payments, which sum to the total), so the change line is
+ * driven by an optional `?tendered=` carried over from completion and computed
+ * against the cash portion. Re-visiting the permalink later simply omits the
+ * change line. Payments may be split across methods (MP-23). MP-22.
  */
 export default async function ReceiptPage({
   params,
@@ -69,10 +70,13 @@ export default async function ReceiptPage({
   }));
 
   const total = sale.total_pesewas as number;
-  const hasCash = payments.some((p) => p.method === "cash");
+  // Change is the over-tender on the cash portion only (tendered − cash charged);
+  // for a cash-only sale the cash payment equals the total, so this also covers
+  // the simple case. A fully cashless sale shows no change line.
+  const cashPayment = payments.find((p) => p.method === "cash");
   const tenderedPesewas = tendered !== undefined && /^\d+$/.test(tendered) ? Number(tendered) : null;
   const change =
-    hasCash && tenderedPesewas !== null ? Math.max(0, tenderedPesewas - total) : null;
+    cashPayment && tenderedPesewas !== null ? Math.max(0, tenderedPesewas - cashPayment.amount) : null;
 
   const created = new Date(sale.created_at as string);
   const dateText = created.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });

@@ -5,7 +5,7 @@ import { useActionState, useMemo, useState } from "react";
 import { Icon } from "@/components/icon";
 import { type Category } from "@/lib/catalog";
 import { format, tryParse } from "@/lib/money";
-import { changeDue, saleTotal } from "@/lib/sale";
+import { changeDue, METHOD_LABEL, PAYMENT_METHODS, saleTotal, type PaymentMethod } from "@/lib/sale";
 
 import { completeSale, type SaleFormState } from "./actions";
 
@@ -38,14 +38,26 @@ interface CartLine {
 
 const INITIAL: SaleFormState = { status: "idle" };
 
+/** Render integer pesewas as a plain decimal (no symbol, no grouping) for an
+ * amount input — round-trips through {@link tryParse} exactly. */
+function plainAmount(pesewas: number): string {
+  return format(pesewas, { symbol: false, grouping: false });
+}
+
 /**
- * The cash sell screen: a searchable, category-filtered catalogue of the Shop's
+ * The sell screen: a searchable, category-filtered catalogue of the Shop's
  * carried Items on the left, and a sticky cart on the right with quantity
- * steppers, a live running total, an optional customer name, the cash tendered,
- * and the change due. Quantities are capped at each Item's on-hand stock (the
- * no-oversell guard, also enforced by the Sale-builder and the DB). Completing
- * submits the cart to {@link completeSale}, which writes the sale atomically and
- * redirects to the receipt. MP-22.
+ * steppers, a live running total, an optional customer name, and the payment
+ * panel. Quantities are capped at each Item's on-hand stock (the no-oversell
+ * guard, also enforced by the Sale-builder and the DB).
+ *
+ * Payment (MP-23) splits across one or more methods — Cash / MoMo / Card /
+ * Transfer — whose amounts must **sum to the total** before the sale can
+ * complete (the live Remaining / Over by / Balanced indicator). One method
+ * auto-fills to the whole total; Cash additionally takes a tendered amount and
+ * shows the change for the cash portion. Completing submits the cart + payments
+ * to {@link completeSale}, which writes the sale atomically and redirects to the
+ * receipt.
  */
 export function SellView({
   shopName,
@@ -60,6 +72,8 @@ export function SellView({
   const [filter, setFilter] = useState<CategoryFilter>("all");
   const [cart, setCart] = useState<Map<string, CartLine>>(new Map());
   const [customer, setCustomer] = useState("");
+  const [methods, setMethods] = useState<PaymentMethod[]>(["cash"]);
+  const [amounts, setAmounts] = useState<Partial<Record<PaymentMethod, string>>>({});
   const [tendered, setTendered] = useState("");
   const [state, formAction, pending] = useActionState(completeSale, INITIAL);
 
@@ -74,9 +88,21 @@ export function SellView({
 
   const lines = [...cart.values()];
   const total = saleTotal(lines.map((line) => ({ unitPrice: line.item.price, quantity: line.qty })));
+
+  // A single chosen method settles the whole total, so its amount is derived from
+  // the cart (shown read-only) — the cashier never types it, and it stays live as
+  // the cart changes with no effect. With two or more methods each amount is
+  // entered and they must sum to the total.
+  const sole = methods.length === 1;
+  const soleAmount = total > 0 ? plainAmount(total) : "";
+  const amountPesewas = (method: PaymentMethod) =>
+    sole ? total : tryParse(amounts[method] ?? "") ?? 0;
+  const paid = methods.reduce((s, method) => s + amountPesewas(method), 0);
+  const remaining = total - paid; // > 0 owed, < 0 over, 0 balanced
+  const cashApplied = methods.includes("cash") ? amountPesewas("cash") : 0;
   const tenderedPesewas = tryParse(tendered) ?? 0;
-  const change = changeDue(total, tenderedPesewas); // signed: > 0 is change owed
-  const canComplete = cart.size > 0 && total > 0 && tenderedPesewas >= total;
+  const change = Math.max(0, changeDue(cashApplied, tenderedPesewas));
+  const canComplete = cart.size > 0 && total > 0 && remaining === 0;
 
   function addItem(item: SellItem) {
     if (item.stock <= 0) return;
@@ -99,7 +125,34 @@ export function SellView({
     });
   }
 
+  function toggleMethod(method: PaymentMethod) {
+    if (methods.includes(method)) {
+      if (methods.length === 1) return; // a sale always has at least one method
+      setMethods(methods.filter((m) => m !== method));
+      setAmounts((prev) => {
+        const next = { ...prev };
+        delete next[method];
+        return next;
+      });
+    } else {
+      // Leaving single-method mode: seed the existing method with the full total
+      // so the split starts balanced, then the cashier adjusts from there.
+      if (sole) {
+        const [current] = methods;
+        setAmounts((prev) => ({ ...prev, [current]: soleAmount }));
+      }
+      setMethods([...methods, method]);
+    }
+  }
+
   const cartPayload = JSON.stringify(lines.map((line) => ({ itemId: line.item.id, quantity: line.qty })));
+  const paymentsPayload = JSON.stringify(
+    methods.map((method) => ({ method, amount: sole ? soleAmount : amounts[method] ?? "" })),
+  );
+
+  const remainingLabel = remaining > 0 ? "Remaining" : remaining < 0 ? "Over by" : "Balanced";
+  const remainingColor =
+    remaining > 0 ? "var(--warning-ink)" : remaining < 0 ? "var(--danger)" : "var(--success)";
 
   return (
     <>
@@ -189,6 +242,7 @@ export function SellView({
         {/* Current sale — the cart is the form that completes the sale */}
         <form action={formAction} className="card cart">
           <input type="hidden" name="cart" value={cartPayload} />
+          <input type="hidden" name="payments" value={paymentsPayload} />
 
           <div className="card-head" style={{ marginBottom: 10 }}>
             <h2 className="h2">Current sale</h2>
@@ -245,26 +299,71 @@ export function SellView({
             </span>
           </div>
 
-          {/* Cash payment (MP-22). Split & multi-method payments arrive in MP-23. */}
+          {/* Payment — split across one or more methods, summing to the total (MP-23) */}
           <div className="overline text-faint" style={{ margin: "4px 0 8px" }}>
-            Payment · Cash
+            Payment
           </div>
-          <div className="pay-row">
-            <label htmlFor="tendered">Tendered</label>
-            <input
-              id="tendered"
-              className="input tnum"
-              name="tendered"
-              inputMode="decimal"
-              placeholder="0.00"
-              value={tendered}
-              onChange={(e) => setTendered(e.target.value)}
-            />
+          <div className="pay-methods">
+            {PAYMENT_METHODS.map((method) => {
+              const active = methods.includes(method);
+              return (
+                <button
+                  key={method}
+                  type="button"
+                  className={"pill" + (active ? " active" : "")}
+                  aria-pressed={active}
+                  onClick={() => toggleMethod(method)}
+                >
+                  {METHOD_LABEL[method]}
+                </button>
+              );
+            })}
           </div>
+
+          {methods.map((method) => (
+            <div key={method}>
+              <div className="pay-row">
+                <label htmlFor={`pay-${method}`}>{METHOD_LABEL[method]}</label>
+                <input
+                  id={`pay-${method}`}
+                  className="input tnum"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  value={sole ? soleAmount : amounts[method] ?? ""}
+                  readOnly={sole}
+                  aria-readonly={sole}
+                  onChange={(e) => setAmounts((prev) => ({ ...prev, [method]: e.target.value }))}
+                />
+              </div>
+              {method === "cash" && (
+                <>
+                  <div className="pay-row">
+                    <label htmlFor="tendered">Tendered</label>
+                    <input
+                      id="tendered"
+                      name="tendered"
+                      className="input tnum"
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      value={tendered}
+                      onChange={(e) => setTendered(e.target.value)}
+                    />
+                  </div>
+                  <div className="remaining" style={{ paddingTop: 0 }}>
+                    <span className="text-muted">Change due</span>
+                    <span className="num body-med" style={{ color: change > 0 ? "var(--success)" : undefined }}>
+                      {format(change)}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+
           <div className="remaining">
-            <span className="text-muted">Change due</span>
-            <span className="num body-med" style={{ color: change > 0 ? "var(--success)" : undefined }}>
-              {format(change > 0 ? change : 0)}
+            <span className="text-muted">{remainingLabel}</span>
+            <span className="num body-med" aria-live="polite" style={{ color: remainingColor }}>
+              {format(remaining < 0 ? -remaining : remaining)}
             </span>
           </div>
 
@@ -281,9 +380,11 @@ export function SellView({
           >
             {pending ? "Completing…" : "Complete sale"}
           </button>
-          {cart.size > 0 && total > 0 && tenderedPesewas < total && (
+          {cart.size > 0 && total > 0 && remaining !== 0 && (
             <p className="caption text-faint" style={{ marginTop: 8, textAlign: "center" }}>
-              Enter cash of at least {format(total)} to complete.
+              {remaining > 0
+                ? `Add ${format(remaining)} more to balance the payment.`
+                : `Payment is ${format(-remaining)} over the total.`}
             </p>
           )}
         </form>

@@ -1,9 +1,10 @@
 /**
- * Sale-write integration test (MP-22) — exercises the real `complete_sale` RPC
- * against the remote Supabase, end to end, to prove the two guarantees the
- * Sale-builder can't on its own: the write is **atomic**, and it **can't
- * oversell**. The pure unit tests live in `sale.test.ts`; this one needs a live
- * database because those properties are enforced in PL/pgSQL under a row lock.
+ * Sale-write integration test (MP-22, split payments MP-23) — exercises the real
+ * `complete_sale` RPC against the remote Supabase, end to end, to prove what the
+ * Sale-builder can't on its own: the write is **atomic**, it **can't oversell**,
+ * and a **split payment** lands as one row per method summing to the total. The
+ * pure unit tests live in `sale.test.ts`; this one needs a live database because
+ * those properties are enforced in PL/pgSQL under a row lock.
  *
  * It seeds its own throwaway Shop, Item, stock, and a Cashier bound to that Shop
  * (via the service-role key, bypassing RLS), then calls the RPC **as that signed-
@@ -88,7 +89,7 @@ describe.skipIf(!ready)("complete_sale RPC (remote integration)", () => {
 
   afterAll(async () => {
     if (!admin) return;
-    const best = async (run: () => Promise<unknown>) => {
+    const best = async (run: () => PromiseLike<unknown>) => {
       try {
         await run();
       } catch {
@@ -217,5 +218,39 @@ describe.skipIf(!ready)("complete_sale RPC (remote integration)", () => {
     expect(error).not.toBeNull();
     expect(error!.message).toMatch(/do not sum/i);
     expect(await stockQty()).toBe(before);
+  });
+
+  it("records a split payment as one row per method, summing to the total (MP-23)", async () => {
+    const before = await stockQty();
+    const cashPart = 5_000;
+    const momoPart = PRICE - cashPart; // one unit at PRICE, settled part cash / part MoMo
+
+    const { data: saleId, error } = await cashier.rpc("complete_sale", {
+      p_shop_id: shopId,
+      p_customer: "ITEST Split",
+      p_lines: [{ item_id: itemId, quantity: 1 }],
+      p_payments: [
+        { method: "momo", amount_pesewas: momoPart },
+        { method: "cash", amount_pesewas: cashPart },
+      ],
+    });
+    expect(error).toBeNull();
+    expect(typeof saleId).toBe("string");
+
+    // Stock down by exactly one; total is the sum of the split.
+    expect(await stockQty()).toBe(before - 1);
+    const { data: sale } = await admin.from("sales").select("total_pesewas").eq("id", saleId).single();
+    expect(sale!.total_pesewas).toBe(PRICE);
+
+    // Both methods persisted, one row each (ordered here for a stable assertion).
+    const { data: payments } = await admin
+      .from("payments")
+      .select("method, amount_pesewas")
+      .eq("sale_id", saleId)
+      .order("method");
+    expect(payments).toEqual([
+      { method: "cash", amount_pesewas: cashPart },
+      { method: "momo", amount_pesewas: momoPart },
+    ]);
   });
 });
