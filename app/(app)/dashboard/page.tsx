@@ -75,7 +75,7 @@ export default async function DashboardPage() {
       )
       .gte("created_at", windowStart)
       .order("created_at", { ascending: false }),
-    supabase.from("items_catalog").select("id, name, category, cost_pesewas, attributes"),
+    supabase.from("items_catalog").select("id, name, category, cost_pesewas, attributes, archived_at"),
     supabase.from("shop_stock").select("item_id, shop_id, quantity"),
     supabase
       .from("shop_settings")
@@ -118,6 +118,7 @@ export default async function DashboardPage() {
       category: row.category as Category,
       costPesewas: (row.cost_pesewas ?? null) as number | null,
       expiry: (attributes.expiry ?? null) as string | null,
+      archived: row.archived_at != null,
     };
   });
 

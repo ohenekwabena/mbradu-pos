@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 import { Icon } from "@/components/icon";
+import { archiveBlockReason, canArchive, isArchived } from "@/lib/archive";
 import {
   ATTRIBUTE_FIELDS,
   CATEGORY_LABEL,
@@ -14,6 +15,7 @@ import {
 import { format } from "@/lib/money";
 import { stockStatus, type StockReason, type StockStatus } from "@/lib/stock";
 
+import { DiscontinueItemModal, RestoreItemButton } from "../archive-controls";
 import { CorrectionModal, RestockModal, type CarriedStock } from "../stock-modals";
 
 export interface ItemDetail {
@@ -26,6 +28,8 @@ export interface ItemDetail {
    * Owner-only, so in practice always present). */
   cost: number | null;
   attributes: Attributes;
+  /** Soft-delete stamp (MP-31): null = active, a timestamp = discontinued. */
+  archivedAt: string | null;
 }
 
 /** One row of the movement ledger, prepared server-side (names resolved, the
@@ -91,6 +95,7 @@ export function ItemDetailView({
 }) {
   const [showRestock, setShowRestock] = useState(false);
   const [showCorrection, setShowCorrection] = useState(false);
+  const [showDiscontinue, setShowDiscontinue] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   // Default the ledger filter to the first carried Shop, else "all".
   const [filter, setFilter] = useState<LedgerFilter>(() => carriedStock[0]?.shopId ?? "all");
@@ -104,6 +109,8 @@ export function ItemDetailView({
   const totalOnHand = carriedStock.reduce((sum, s) => sum + s.quantity, 0);
   const canCorrect = carriedStock.length > 0;
   const showBalance = filter !== "all";
+  const archived = isArchived(item.archivedAt);
+  const discontinueBlock = archiveBlockReason(totalOnHand);
 
   const visibleLedger = useMemo(
     () => (filter === "all" ? ledger : ledger.filter((e) => e.shopId === filter)),
@@ -113,6 +120,7 @@ export function ItemDetailView({
   function onActionSaved(message: string) {
     setShowRestock(false);
     setShowCorrection(false);
+    setShowDiscontinue(false);
     setToast(message);
   }
 
@@ -126,13 +134,24 @@ export function ItemDetailView({
         <Icon name="back" /> Inventory
       </Link>
 
+      {archived && (
+        <div className="notice" role="status" style={{ marginBottom: 16 }}>
+          <Icon name="box" />
+          <span>
+            This item is <strong>discontinued</strong> — hidden from selling and restocking.
+            Its history is preserved; restore it to sell or restock again.
+          </span>
+        </div>
+      )}
+
       <div className="card">
         <div className="summary">
           <div>
             <div className="row gap-12" style={{ alignItems: "center", flexWrap: "wrap" }}>
               <h2 className="h2">{item.name}</h2>
               <span className="chip chip-neutral">{CATEGORY_LABEL[item.category]}</span>
-              {expiringSoon && <span className="chip chip-accent">Expiring soon</span>}
+              {archived && <span className="chip chip-outline">Archived</span>}
+              {!archived && expiringSoon && <span className="chip chip-accent">Expiring soon</span>}
             </div>
             <div className="specs">
               <Spec k="Selling price" v={format(item.price)} />
@@ -145,18 +164,38 @@ export function ItemDetailView({
             </div>
           </div>
           <div className="row gap-8" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <button type="button" className="btn btn-primary" onClick={() => setShowRestock(true)}>
-              <Icon name="restock" /> Restock
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setShowCorrection(true)}
-              disabled={!canCorrect}
-              title={canCorrect ? undefined : "Restock first to start carrying this item"}
-            >
-              Correction
-            </button>
+            {archived ? (
+              <RestoreItemButton
+                itemId={item.id}
+                itemName={item.name}
+                onDone={onActionSaved}
+                variant="button"
+              />
+            ) : (
+              <>
+                <button type="button" className="btn btn-primary" onClick={() => setShowRestock(true)}>
+                  <Icon name="restock" /> Restock
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowCorrection(true)}
+                  disabled={!canCorrect}
+                  title={canCorrect ? undefined : "Restock first to start carrying this item"}
+                >
+                  Correction
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => setShowDiscontinue(true)}
+                  disabled={!canArchive(totalOnHand)}
+                  title={discontinueBlock ?? undefined}
+                >
+                  <Icon name="box" /> Discontinue
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -308,6 +347,15 @@ export function ItemDetailView({
           activeShopId={activeShopId}
           onClose={() => setShowCorrection(false)}
           onSaved={onActionSaved}
+        />
+      )}
+
+      {showDiscontinue && (
+        <DiscontinueItemModal
+          itemId={item.id}
+          itemName={item.name}
+          onClose={() => setShowDiscontinue(false)}
+          onDone={onActionSaved}
         />
       )}
 

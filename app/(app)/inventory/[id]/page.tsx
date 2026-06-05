@@ -35,7 +35,7 @@ export default async function ItemDetailPage({
   // row → 404 rather than a broken page.
   const { data: itemRow } = await supabase
     .from("items_catalog")
-    .select("id, category, name, price_pesewas, cost_pesewas, attributes")
+    .select("id, category, name, price_pesewas, cost_pesewas, attributes, archived_at")
     .eq("id", id)
     .maybeSingle();
 
@@ -115,6 +115,7 @@ export default async function ItemDetailPage({
     price: itemRow.price_pesewas as number,
     cost: (itemRow.cost_pesewas ?? null) as number | null,
     attributes: (itemRow.attributes ?? {}) as Attributes,
+    archivedAt: (itemRow.archived_at ?? null) as string | null,
   };
 
   // Business-wide stock-health settings (ADR-0005): the threshold drives the

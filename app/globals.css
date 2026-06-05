@@ -834,6 +834,14 @@ table.tbl tr:last-child td {
   background: var(--primary-tint);
   color: var(--primary);
 }
+.row-act:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.row-act:disabled:hover {
+  background: transparent;
+  color: var(--faint);
+}
 
 /* ============================================================
    Catalog / inventory (MP-17)

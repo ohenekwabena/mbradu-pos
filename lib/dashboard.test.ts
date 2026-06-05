@@ -320,3 +320,31 @@ describe("buildDashboard — single-Shop scope confines every figure", () => {
     expect(vm.owner!.grossProfitPesewas).toBe(3000);
   });
 });
+
+describe("buildDashboard — archived Items (MP-31)", () => {
+  const withToolArchived = () =>
+    makeInput({
+      items: ITEMS.map((i) => (i.id === "toolA" ? { ...i, archived: true } : { ...i })),
+    });
+
+  it("excludes an archived Item from stock health (out / low / expiring)", () => {
+    const active = buildDashboard(makeInput());
+    // Fixture: toolA is out at shopB (qty 0) and in at shopA (qty 10).
+    expect(active.stockHealth.out.some((e) => e.itemId === "toolA")).toBe(true);
+    expect(active.outOfStockCount).toBe(2); // cosA @ shopA, toolA @ shopB
+
+    const vm = buildDashboard(withToolArchived());
+    expect(vm.stockHealth.out.some((e) => e.itemId === "toolA")).toBe(false);
+    expect(vm.stockHealth.low.some((e) => e.itemId === "toolA")).toBe(false);
+    expect(vm.stockHealth.expiring.some((e) => e.itemId === "toolA")).toBe(false);
+    expect(vm.outOfStockCount).toBe(1); // only cosA @ shopA remains
+  });
+
+  it("still counts an archived Item's history in revenue and COGS", () => {
+    // toolA sold 3 units today (s2). Archiving it must not change revenue or COGS —
+    // the Item stays resolvable for cost; it is only dropped from stock health.
+    const vm = buildDashboard(withToolArchived());
+    expect(vm.today.revenuePesewas).toBe(64500);
+    expect(vm.owner!.cogsPesewas).toBe(18500);
+  });
+});

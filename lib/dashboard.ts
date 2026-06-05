@@ -97,6 +97,10 @@ export interface DashboardItem {
   category: Category;
   costPesewas: Pesewas | null;
   expiry: string | null;
+  /** Archived/discontinued (MP-31). Kept in the map for cost/COGS resolution of
+   * historical Sales, but skipped from stock health so a 0-stock discontinued
+   * Item isn't reported as "out of stock". Defaults to active when absent. */
+  archived?: boolean;
 }
 
 /** A Shop (id + display name). */
@@ -373,7 +377,9 @@ function buildStockHealth(
 
   for (const row of stock) {
     const item = itemsById.get(row.itemId);
-    if (!item) continue; // a stock row with no catalog match — skip defensively
+    // Skip a stock row with no catalog match, and any archived/discontinued Item:
+    // it sits at 0 stock and must not surface as an "out of stock" alert (MP-31).
+    if (!item || item.archived) continue;
 
     const base = {
       itemId: row.itemId,

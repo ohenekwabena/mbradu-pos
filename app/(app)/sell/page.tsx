@@ -53,6 +53,7 @@ export default async function SellPage() {
       supabase
         .from("items_catalog")
         .select("id, category, name, price_pesewas, attributes")
+        .is("archived_at", null)
         .order("name"),
       supabase.from("shop_settings").select("low_stock_threshold").eq("id", true).maybeSingle(),
     ]);
