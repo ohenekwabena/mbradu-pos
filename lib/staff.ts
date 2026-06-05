@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 export interface StaffMember {
   id: string;
@@ -55,4 +56,43 @@ export async function getStaffRoster(): Promise<StaffMember[]> {
   });
 
   return members;
+}
+
+export interface PendingInvite {
+  id: string;
+  email: string;
+  shopName: string | null;
+  /** ISO timestamp the invitation was issued — formatted to "Invited … ago". */
+  createdAt: string;
+}
+
+/**
+ * The Owner's still-open invitations (status `pending`), newest first, each with
+ * its target Shop's name. Unlike {@link getStaffRoster} this reads through the
+ * ordinary RLS client, not the admin one: the "Owner manages invitations" policy
+ * already scopes the table to the Owner, so the read is itself the server-side
+ * proof that only the Owner sees invitations. The Staff page still guards on role
+ * first. Shop names are joined in app code (a small id→name map) to avoid
+ * depending on PostgREST embedding.
+ */
+export async function getPendingInvitations(): Promise<PendingInvite[]> {
+  const supabase = await createClient();
+
+  const [{ data: invites }, { data: shops }] = await Promise.all([
+    supabase
+      .from("invitations")
+      .select("id, email, shop_id, created_at")
+      .eq("status", "pending")
+      .order("created_at", { ascending: false }),
+    supabase.from("shops").select("id, name"),
+  ]);
+
+  const shopNameById = new Map((shops ?? []).map((s) => [s.id, s.name]));
+
+  return (invites ?? []).map((invite) => ({
+    id: invite.id,
+    email: invite.email,
+    shopName: invite.shop_id ? (shopNameById.get(invite.shop_id) ?? null) : null,
+    createdAt: invite.created_at,
+  }));
 }

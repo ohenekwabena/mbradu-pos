@@ -1084,6 +1084,37 @@ table.tbl tr:last-child td {
   gap: 24px;
   align-items: start;
 }
+/* Staff page: roster (left) + invite/pending column (right). */
+.staff-grid {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 24px;
+  align-items: start;
+}
+@media (max-width: 880px) {
+  .staff-grid {
+    grid-template-columns: 1fr;
+  }
+}
+/* Pending-invitations rows (design §Staff). */
+.invite-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.invite-row:last-child {
+  border-bottom: none;
+}
+.invite-row .e {
+  font-weight: 500;
+  font-size: 13px;
+}
+.invite-row .t {
+  color: var(--muted);
+  font-size: 12px;
+}
 .stack {
   display: flex;
   flex-direction: column;
