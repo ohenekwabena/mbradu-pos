@@ -11,7 +11,7 @@ import { ShopSwitcher, type SwitcherShop } from "./shop-switcher";
 
 /**
  * The topbar: page title/subtitle (derived from the route), the Shop-context
- * control (Owner switcher / Cashier locked label), search, notifications, and
+ * control (Owner switcher / Cashier locked label), notifications, and
  * the account menu (design.md §4.1).
  */
 export function TopBar({
@@ -52,13 +52,6 @@ export function TopBar({
             </span>
           </div>
         ) : null}
-
-        <div className="search" role="search">
-          <span>
-            <Icon name="search" />
-          </span>
-          <input placeholder="Search…" aria-label="Search" />
-        </div>
 
         {role === "owner" && (
           <button type="button" className="icon-btn" aria-label="Notifications">
