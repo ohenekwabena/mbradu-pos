@@ -27,6 +27,10 @@
 # Claude Design handoff bundle (extracted reference, not committed)
 .design-pkg/
 
+# Claude Code local state (machine-local settings + linked git worktrees)
+.claude/settings.local.json
+.claude/worktrees/
+
 # debug
 npm-debug.log*
 yarn-debug.log*
