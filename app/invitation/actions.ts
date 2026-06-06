@@ -4,7 +4,11 @@ import { redirect } from "next/navigation";
 
 import { sendLoginCode } from "@/lib/auth/login-code";
 import { validateNewPassword } from "@/lib/auth/password";
-import { signupReducer, type SignupState } from "@/lib/auth/signup-flow";
+import {
+  signupReducer,
+  validateInvitedName,
+  type SignupState,
+} from "@/lib/auth/signup-flow";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -82,6 +86,20 @@ export async function completeSignup(
   const password = String(formData.get("password") ?? "");
   const confirm = String(formData.get("confirm") ?? "");
 
+  // First + last name are compulsory. Re-checked here, not just via the form's
+  // `required`, because a Server Action is reachable by direct POST. The trimmed,
+  // composed full name rides in user metadata onto the new profile (below).
+  const name = validateInvitedName(
+    String(formData.get("first_name") ?? ""),
+    String(formData.get("last_name") ?? ""),
+  );
+  if (!name.ok) {
+    return signupReducer(prevState, {
+      type: "signup_rejected",
+      message: name.error,
+    });
+  }
+
   const passwordError = validateNewPassword(password, confirm);
   if (passwordError) {
     return signupReducer(prevState, {
@@ -103,15 +121,19 @@ export async function completeSignup(
   const admin = createAdminClient();
 
   // Create the Cashier already email-confirmed (the invitation proved the
-  // address) and bound to the invitation's Shop: the role + shop_id ride in user
-  // metadata that the handle_new_user trigger writes onto their profile, so they
-  // land scoped to exactly one Shop. role is fixed here, never taken from the
-  // client, so sign-up can't mint an Owner.
+  // address) and bound to the invitation's Shop: the role, shop_id, and full name
+  // ride in user metadata that the handle_new_user trigger writes onto their
+  // profile, so they land scoped to exactly one Shop and named on the roster.
+  // role is fixed here, never taken from the client, so sign-up can't mint an Owner.
   const { error: createError } = await admin.auth.admin.createUser({
     email: invite.email,
     password,
     email_confirm: true,
-    user_metadata: { role: "cashier", shop_id: invite.shopId },
+    user_metadata: {
+      role: "cashier",
+      shop_id: invite.shopId,
+      full_name: name.fullName,
+    },
   });
   if (createError) {
     const message = /already|registered|exists/i.test(createError.message)

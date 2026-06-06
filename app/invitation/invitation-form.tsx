@@ -46,11 +46,11 @@ export function InvitationForm({
     <form action={formAction}>
       <input type="hidden" name="token" value={token} />
       <h1 className="h3" style={{ marginBottom: 4 }}>
-        Set your password
+        Set up your account
       </h1>
       <p className="text-muted caption" style={{ marginBottom: 20 }}>
-        Choose a password to finish setting up your account and start ringing up
-        sales.
+        Tell us your name and choose a password to finish setting up your account
+        and start ringing up sales.
       </p>
       {state.error && (
         <div className="err-banner">
@@ -76,6 +76,39 @@ export function InvitationForm({
             <Icon name="store" />
           </span>
           {shopName}
+        </div>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 12,
+          marginBottom: 14,
+        }}
+      >
+        <div className="field">
+          <label htmlFor="first_name">First name</label>
+          <input
+            className="input"
+            id="first_name"
+            name="first_name"
+            type="text"
+            autoComplete="given-name"
+            placeholder="Kojo"
+            required
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="last_name">Last name</label>
+          <input
+            className="input"
+            id="last_name"
+            name="last_name"
+            type="text"
+            autoComplete="family-name"
+            placeholder="Mensah"
+            required
+          />
         </div>
       </div>
       <div className="field" style={{ marginBottom: 6 }}>

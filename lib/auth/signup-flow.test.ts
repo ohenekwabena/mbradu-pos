@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 
-import { signupReducer, initialSignupState } from "./signup-flow";
+import {
+  signupReducer,
+  initialSignupState,
+  validateInvitedName,
+} from "./signup-flow";
 
 describe("invitation sign-up reducer", () => {
   it("advances from the password form to code entry, carrying the email, once the account is created", () => {
@@ -72,5 +76,30 @@ describe("invitation sign-up reducer", () => {
     const state = signupReducer(initialSignupState, { type: "code_rejected" });
 
     expect(state).toEqual(initialSignupState);
+  });
+});
+
+describe("invited name validation", () => {
+  it("composes a single full name from the trimmed first and last name", () => {
+    expect(validateInvitedName("  Kojo ", " Mensah  ")).toEqual({
+      ok: true,
+      fullName: "Kojo Mensah",
+    });
+  });
+
+  it("rejects a missing first name", () => {
+    const result = validateInvitedName("   ", "Mensah");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toMatch(/first and last name/i);
+  });
+
+  it("rejects a missing last name", () => {
+    const result = validateInvitedName("Kojo", "");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toMatch(/first and last name/i);
   });
 });

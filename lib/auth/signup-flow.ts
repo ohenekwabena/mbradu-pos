@@ -24,6 +24,30 @@ export type SignupEvent =
 
 export const initialSignupState: SignupState = { step: "form" };
 
+/**
+ * The invited Cashier's name, validated. Both the first and last name are
+ * compulsory when accepting an invitation, so the profile is never born nameless
+ * (it would otherwise show as "—" on the Owner's Staff roster). Returns the
+ * trimmed, single-string `fullName` to store on the profile, or a user-facing
+ * `error` when either part is blank. Pure + unit-tested like `validateNewPassword`,
+ * so the Server Action stays a thin caller and the rule is exercised in isolation.
+ */
+export type NameValidation =
+  | { ok: true; fullName: string }
+  | { ok: false; error: string };
+
+export function validateInvitedName(
+  firstName: string,
+  lastName: string,
+): NameValidation {
+  const first = firstName.trim();
+  const last = lastName.trim();
+  if (!first || !last) {
+    return { ok: false, error: "Enter your first and last name." };
+  }
+  return { ok: true, fullName: `${first} ${last}` };
+}
+
 export function signupReducer(
   state: SignupState,
   event: SignupEvent,
