@@ -72,7 +72,7 @@ export default async function StaffPage() {
                 const isOwner = member.role === "owner";
                 return (
                   <tr key={member.id}>
-                    <td>
+                    <td style={{ whiteSpace: "nowrap" }}>
                       <div className="row gap-12">
                         <span className="avatar">{initials(member.name)}</span>
                         <span className="body-med">{member.name}</span>
@@ -86,7 +86,10 @@ export default async function StaffPage() {
                         {isOwner ? "Owner" : "Cashier"}
                       </span>
                     </td>
-                    <td className={isOwner ? "text-faint" : undefined}>
+                    <td
+                      className={isOwner ? "text-faint" : undefined}
+                      style={{ whiteSpace: "nowrap" }}
+                    >
                       {isOwner ? "— All shops" : (member.shopName ?? "—")}
                     </td>
                     <td>

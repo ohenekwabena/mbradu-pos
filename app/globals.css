@@ -1116,19 +1116,31 @@ table.tbl tr:last-child td {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 12px 0;
   border-bottom: 1px solid var(--line);
 }
 .invite-row:last-child {
   border-bottom: none;
 }
+/* The text column must be allowed to shrink — flex items default to
+   min-width:auto, so a long email or shop name would otherwise push the
+   Resend/Cancel buttons past the card's right edge. */
+.invite-row > div:first-child {
+  min-width: 0;
+}
 .invite-row .e {
   font-weight: 500;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 .invite-row .t {
   color: var(--muted);
   font-size: 12px;
+}
+/* Keep the actions at their natural size; only the text column flexes. */
+.invite-row .row {
+  flex-shrink: 0;
 }
 .stack {
   display: flex;
