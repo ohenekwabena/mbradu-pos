@@ -24,7 +24,7 @@ export function LoginForm() {
         notice={state.notice}
         pending={pending}
         formAction={formAction}
-        back={{ href: "/login", label: "← Use a different account" }}
+        back={{ label: "← Use a different account" }}
       />
     );
   }

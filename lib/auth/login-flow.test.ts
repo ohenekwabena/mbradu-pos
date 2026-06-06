@@ -85,4 +85,18 @@ describe("two-step login reducer", () => {
     expect(state.notice).toMatch(/code/i);
     expect(state.error).toBeUndefined();
   });
+
+  it("returns to a pristine password step, dropping the email and any message, when the user starts over", () => {
+    const rejected = loginReducer(
+      loginReducer(initialLoginState, {
+        type: "password_accepted",
+        email: "owner@mbradu.example",
+      }),
+      { type: "code_rejected" },
+    );
+
+    const state = loginReducer(rejected, { type: "start_over" });
+
+    expect(state).toEqual(initialLoginState);
+  });
 });

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { Icon } from "@/components/icon";
@@ -74,8 +73,13 @@ export function OtpBoxes({ disabled }: { disabled: boolean }) {
  * The emailed-code step, shared by the two-step login and the invitation
  * sign-up. Rendered only once a code has been sent, so it mounts fresh — its
  * resend cooldown starts from `useState`'s initial value (no effect needed), and
- * a resend just resets it on click. `back` is an optional link above the heading
- * (login offers "use a different account"; sign-up has none).
+ * a resend just resets it on click. `back` is an optional control above the
+ * heading that dispatches the action with `intent=restart` to reset the flow to
+ * its first step (login offers "use a different account"; sign-up has none). It
+ * fires imperatively from a `type="button"`, not a submit, for two reasons: a
+ * plain link to `/login` is a no-op since login is already there (soft nav keeps
+ * this client component's action state stuck on the code step), and a submit
+ * button placed here would steal Enter from "Verify" as the form's default.
  */
 export function OtpCodeStep({
   email,
@@ -90,7 +94,7 @@ export function OtpCodeStep({
   notice?: string;
   pending: boolean;
   formAction: (formData: FormData) => void;
-  back?: { href: string; label: string };
+  back?: { label: string };
 }) {
   const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_SECONDS);
   useEffect(() => {
@@ -102,13 +106,19 @@ export function OtpCodeStep({
   return (
     <form action={formAction}>
       {back && (
-        <Link
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => {
+            const data = new FormData();
+            data.set("intent", "restart");
+            formAction(data);
+          }}
           className="link"
-          href={back.href}
           style={{ display: "inline-block", marginBottom: 14 }}
         >
           {back.label}
-        </Link>
+        </button>
       )}
       <h1 className="h3" style={{ marginBottom: 4 }}>
         Enter your code

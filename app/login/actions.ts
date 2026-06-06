@@ -63,6 +63,11 @@ export async function authenticate(
 ): Promise<LoginState> {
   // Step 2 — the user is entering (or re-requesting) the emailed code.
   if (prevState.step === "code") {
+    // "Use a different account" — abandon this code and return to step 1.
+    if (formData.get("intent") === "restart") {
+      return loginReducer(prevState, { type: "start_over" });
+    }
+
     if (formData.get("intent") === "resend") {
       await emailOneTimeCode(prevState.email);
       return loginReducer(prevState, { type: "code_resent" });

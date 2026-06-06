@@ -9,7 +9,8 @@ export type LoginEvent =
   | { type: "code_accepted" }
   | { type: "code_rejected" }
   | { type: "code_resent" }
-  | { type: "account_deactivated" };
+  | { type: "account_deactivated" }
+  | { type: "start_over" };
 
 export const initialLoginState: LoginState = { step: "password" };
 
@@ -45,6 +46,10 @@ export function loginReducer(state: LoginState, event: LoginEvent): LoginState {
         email: state.email,
         notice: "We sent a fresh code to your email.",
       };
+    case "start_over":
+      // "Use a different account" — discard the pending code and email, back to
+      // a pristine password step (no carried-over error or notice).
+      return initialLoginState;
     default:
       return state;
   }
