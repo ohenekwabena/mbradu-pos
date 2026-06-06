@@ -2015,9 +2015,39 @@ table.tbl tr:last-child td {
   .sell {
     grid-template-columns: 1fr;
   }
+  /* The cart no longer trails the (often long) catalogue at the foot of the
+     page — it becomes a bottom sheet summoned by the floating .cart-fab. The
+     flex column is preserved so the header, total, payment panel, and Complete
+     button stay pinned while only the item lines scroll. */
   .sell .cart {
-    position: static;
-    max-height: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    width: auto;
+    max-width: none;
+    max-height: 90vh;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    box-shadow: 0 -10px 40px rgba(33, 33, 33, 0.18);
+    z-index: 101;
+    padding-top: 14px;
+    padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
+    transform: translateY(101%);
+    transition: transform 0.28s ease;
+  }
+  .sell .cart.cart-open {
+    transform: translateY(0);
+  }
+  .sheet-handle {
+    display: block;
+  }
+  .cart-close {
+    display: grid;
+  }
+  /* foot room so the catalogue's last row clears the floating button */
+  .sell.has-fab > section {
+    padding-bottom: 84px;
   }
 }
 
@@ -2054,20 +2084,6 @@ table.tbl tr:last-child td {
   flex-direction: column;
   gap: 4px;
 }
-.item-card .thumb {
-  height: 76px;
-  border-radius: var(--r-md);
-  background: var(--grey-50);
-  border: 1px solid var(--line);
-  margin-bottom: 10px;
-  display: grid;
-  place-items: center;
-  color: var(--disabled);
-}
-.item-card .thumb svg {
-  width: 24px;
-  height: 24px;
-}
 .item-card .name {
   font-weight: 500;
   line-height: 20px;
@@ -2086,7 +2102,8 @@ table.tbl tr:last-child td {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-.item-card .add {
+.item-card .add,
+.item-row .add {
   width: 36px;
   height: 36px;
   border-radius: var(--r-pill);
@@ -2096,21 +2113,80 @@ table.tbl tr:last-child td {
   cursor: pointer;
   display: grid;
   place-items: center;
+  flex-shrink: 0;
 }
-.item-card .add svg {
+.item-card .add svg,
+.item-row .add svg {
   width: 18px;
   height: 18px;
 }
-.item-card .add:hover {
+.item-card .add:hover,
+.item-row .add:hover {
   background: var(--primary-hover);
 }
 .item-card.oos {
   opacity: 0.85;
 }
-.item-card.oos .add {
+.item-card.oos .add,
+.item-row.oos .add {
   background: var(--grey-100);
   color: var(--disabled);
   cursor: not-allowed;
+}
+
+/* List view — the same carried Items as .item-grid, one per row. Toggled
+   from the catalogue toolbar (.view-toggle); shares the chip and round add
+   button with the cards. */
+.item-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.item-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--sh-sm);
+}
+.item-row .ir-name {
+  flex: 1;
+  min-width: 0;
+}
+.item-row .name {
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.item-row .attr {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.item-row .price {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.item-row .chip {
+  flex-shrink: 0;
+}
+
+/* Icon-only segmented control (e.g. the Sell card/list view toggle). */
+.icon-pill {
+  width: 36px;
+  padding: 0;
+  justify-content: center;
+}
+.icon-pill svg {
+  width: 17px;
+  height: 17px;
 }
 
 .cart {
@@ -2122,6 +2198,7 @@ table.tbl tr:last-child td {
 }
 .cart .lines {
   flex: 1;
+  min-height: 0; /* shrink within the sheet's capped height instead of pushing the payment panel off-screen */
   overflow-y: auto;
   overflow-x: hidden;
   margin: 0 -4px;
@@ -2207,6 +2284,117 @@ table.tbl tr:last-child td {
   text-align: center;
   color: var(--muted);
   padding: 40px 12px;
+}
+
+/* ============================================================
+   Sell — mobile cart sheet & floating button
+   On narrow screens (≤980px) the sticky cart would sink to the foot
+   of a long catalogue, so it becomes a bottom sheet opened by a
+   floating button carrying the live item count + total. These base
+   rules keep the controls hidden on desktop; the sheet itself is
+   activated in the max-width:980px block further up.
+   ============================================================ */
+.sheet-handle {
+  display: none;
+  flex: none;
+  width: 40px;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--line-strong);
+  margin: 0 auto 12px;
+}
+.card-head .ch-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.cart-close {
+  display: none;
+}
+.cart-scrim,
+.cart-fab {
+  display: none;
+}
+
+@media (max-width: 980px) {
+  .cart-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(33, 33, 33, 0.4);
+    z-index: 100;
+    animation: cart-fade 0.2s ease;
+  }
+  .cart-fab {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    position: fixed;
+    right: 16px;
+    bottom: 24px;
+    z-index: 95;
+    height: 52px;
+    padding: 0 18px 0 14px;
+    border: none;
+    border-radius: var(--r-pill);
+    background: var(--primary);
+    color: #fff;
+    font: inherit;
+    font-weight: 600;
+    box-shadow: 0 8px 24px rgba(33, 33, 33, 0.24);
+    cursor: pointer;
+    animation: cart-fade 0.2s ease;
+  }
+  .cart-fab:hover {
+    background: var(--primary-hover);
+  }
+  .cart-fab-ico {
+    position: relative;
+    display: grid;
+    place-items: center;
+  }
+  .cart-fab-ico svg {
+    width: 22px;
+    height: 22px;
+  }
+  .cart-fab-badge {
+    position: absolute;
+    top: -7px;
+    right: -9px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: var(--r-pill);
+    background: #fff;
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+  }
+  .cart-fab-label {
+    font-size: 14px;
+  }
+  .cart-fab-total {
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Phones (≤760px) carry a fixed bottom tab bar — lift the button above it. */
+@media (max-width: 760px) {
+  .cart-fab {
+    bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@keyframes cart-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* ============================================================

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 
 import { Icon } from "@/components/icon";
 import { type Category } from "@/lib/catalog";
@@ -44,6 +44,17 @@ function plainAmount(pesewas: number): string {
   return format(pesewas, { symbol: false, grouping: false });
 }
 
+/** The stock chip's tone and label for an Item — shared by the card and list
+ * views so both read the same: out of stock (danger), at/under the low
+ * threshold (warning), otherwise healthy (success). */
+function stockChipClass(stock: number, lowThreshold: number): string {
+  if (stock <= 0) return "chip-danger";
+  return stock <= lowThreshold ? "chip-warning" : "chip-success";
+}
+function stockLabel(stock: number): string {
+  return stock <= 0 ? "Out of stock" : `${stock} left`;
+}
+
 /**
  * The sell screen: a searchable, category-filtered catalogue of the Shop's
  * carried Items on the left, and a sticky cart on the right with quantity
@@ -70,12 +81,32 @@ export function SellView({
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<CategoryFilter>("all");
+  const [view, setView] = useState<"grid" | "list">("grid");
   const [cart, setCart] = useState<Map<string, CartLine>>(new Map());
   const [customer, setCustomer] = useState("");
   const [methods, setMethods] = useState<PaymentMethod[]>(["cash"]);
   const [amounts, setAmounts] = useState<Partial<Record<PaymentMethod, string>>>({});
   const [tendered, setTendered] = useState("");
   const [state, formAction, pending] = useActionState(completeSale, INITIAL);
+  // On narrow screens the cart is a bottom sheet (see .cart-fab / .cart-open in
+  // globals.css); on wider screens it's the always-open sticky sidebar and this
+  // flag is inert.
+  const [cartOpen, setCartOpen] = useState(false);
+
+  // While the sheet is up, lock the page behind it and let Escape dismiss it.
+  useEffect(() => {
+    if (!cartOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCartOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [cartOpen]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -160,7 +191,7 @@ export function SellView({
         <Icon name="store" /> Ringing up at <strong>{shopName}</strong> — a sale belongs to one shop.
       </div>
 
-      <div className="sell">
+      <div className={"sell" + (cart.size > 0 ? " has-fab" : "")}>
         {/* Catalogue — only the Items this Shop carries */}
         <section>
           <div className="cat-toolbar">
@@ -185,6 +216,28 @@ export function SellView({
                 </button>
               ))}
             </div>
+            <div className="seg-tabs view-toggle" role="group" aria-label="Item view">
+              <button
+                type="button"
+                className={"pill icon-pill" + (view === "grid" ? " active" : "")}
+                aria-pressed={view === "grid"}
+                aria-label="Card view"
+                title="Card view"
+                onClick={() => setView("grid")}
+              >
+                <Icon name="grid" />
+              </button>
+              <button
+                type="button"
+                className={"pill icon-pill" + (view === "list" ? " active" : "")}
+                aria-pressed={view === "list"}
+                aria-label="List view"
+                title="List view"
+                onClick={() => setView("list")}
+              >
+                <Icon name="list" />
+              </button>
+            </div>
           </div>
 
           {visible.length === 0 ? (
@@ -201,24 +254,18 @@ export function SellView({
                   : "Try a different search or category."}
               </p>
             </div>
-          ) : (
+          ) : view === "grid" ? (
             <div className="item-grid">
               {visible.map((item) => {
                 const oos = item.stock <= 0;
-                const chip = oos
-                  ? "chip-danger"
-                  : item.stock <= lowThreshold
-                    ? "chip-warning"
-                    : "chip-success";
                 return (
                   <div key={item.id} className={"item-card" + (oos ? " oos" : "")}>
-                    <div className="thumb">
-                      <Icon name="box" />
-                    </div>
                     <div className="name">{item.name}</div>
                     {item.subline && <div className="attr">{item.subline}</div>}
                     <div className="row" style={{ marginTop: 8 }}>
-                      <span className={"chip " + chip}>{oos ? "Out of stock" : `${item.stock} left`}</span>
+                      <span className={"chip " + stockChipClass(item.stock, lowThreshold)}>
+                        {stockLabel(item.stock)}
+                      </span>
                     </div>
                     <div className="price-row">
                       <span className="price">{format(item.price)}</span>
@@ -236,19 +283,59 @@ export function SellView({
                 );
               })}
             </div>
+          ) : (
+            <div className="item-list">
+              {visible.map((item) => {
+                const oos = item.stock <= 0;
+                return (
+                  <div key={item.id} className={"item-row" + (oos ? " oos" : "")}>
+                    <div className="ir-name">
+                      <div className="name">{item.name}</div>
+                      {item.subline && <div className="attr">{item.subline}</div>}
+                    </div>
+                    <span className={"chip " + stockChipClass(item.stock, lowThreshold)}>
+                      {stockLabel(item.stock)}
+                    </span>
+                    <span className="price">{format(item.price)}</span>
+                    <button
+                      type="button"
+                      className="add"
+                      aria-label={`Add ${item.name}`}
+                      disabled={oos}
+                      onClick={() => addItem(item)}
+                    >
+                      <Icon name={oos ? "x" : "plus"} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </section>
 
         {/* Current sale — the cart is the form that completes the sale */}
-        <form action={formAction} className="card cart">
+        <form action={formAction} className={"card cart" + (cartOpen ? " cart-open" : "")}>
           <input type="hidden" name="cart" value={cartPayload} />
           <input type="hidden" name="payments" value={paymentsPayload} />
 
+          {/* Bottom-sheet grab handle — desktop-hidden (sidebar needs no handle) */}
+          <div className="sheet-handle" aria-hidden="true" />
+
           <div className="card-head" style={{ marginBottom: 10 }}>
             <h2 className="h2">Current sale</h2>
-            <span className="caption text-faint">
-              {cart.size} {cart.size === 1 ? "item" : "items"}
-            </span>
+            <div className="ch-right">
+              <span className="caption text-faint">
+                {cart.size} {cart.size === 1 ? "item" : "items"}
+              </span>
+              <button
+                type="button"
+                className="icon-btn cart-close"
+                aria-label="Close sale panel"
+                onClick={() => setCartOpen(false)}
+              >
+                <Icon name="x" />
+              </button>
+            </div>
           </div>
 
           <div className="field" style={{ marginBottom: 12 }}>
@@ -389,6 +476,31 @@ export function SellView({
           )}
         </form>
       </div>
+
+      {/* Mobile only (CSS-gated): dim the page behind the cart sheet. */}
+      {cartOpen && (
+        <div className="cart-scrim" aria-hidden="true" onClick={() => setCartOpen(false)} />
+      )}
+
+      {/* Floating button that summons the cart sheet on narrow screens, carrying
+          the live item count and running total so it's useful at a glance. */}
+      {cart.size > 0 && !cartOpen && (
+        <button
+          type="button"
+          className="cart-fab"
+          aria-label={`View current sale: ${cart.size} ${
+            cart.size === 1 ? "item" : "items"
+          }, total ${format(total)}`}
+          onClick={() => setCartOpen(true)}
+        >
+          <span className="cart-fab-ico">
+            <Icon name="sell" />
+            <span className="cart-fab-badge">{cart.size}</span>
+          </span>
+          <span className="cart-fab-label">View sale</span>
+          <span className="cart-fab-total tnum">{format(total)}</span>
+        </button>
+      )}
     </>
   );
 }
