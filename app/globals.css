@@ -1582,7 +1582,7 @@ table.tbl tr:last-child td {
   isolation: isolate; /* own stacking context so ::before stays behind .auth */
 }
 /* Decorative 3D-icon backdrop: the premium icons from /public/layouts, scattered
-   around the centered card, heavily blurred and dimmed so they read as ambient
+   around the centered card, softly blurred and dimmed so they read as ambient
    branding without competing with the form. Purely cosmetic — a pseudo-element,
    so it's invisible to assistive tech. Tune the feel with background-position
    (where), background-size (how big), filter: blur() (how soft), and opacity. */
@@ -1604,7 +1604,7 @@ table.tbl tr:last-child td {
   background-position: 13% 18%, 86% 16%, 7% 50%, 93% 48%, 14% 82%, 85% 82%,
     26% 62%;
   background-size: 108px, 96px, 84px, 118px, 100px, 92px, 76px;
-  filter: blur(12px);
+  filter: blur(5px);
   opacity: 0.5;
 }
 @media (max-width: 480px) {

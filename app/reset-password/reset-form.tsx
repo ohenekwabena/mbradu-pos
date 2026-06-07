@@ -1,19 +1,35 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useRouter } from "next/navigation";
+import { useActionState, useEffect } from "react";
 
 import { Icon } from "@/components/icon";
 import { initialResetState, MIN_PASSWORD_LENGTH } from "@/lib/auth/password";
 import { setNewPassword } from "./actions";
 
+// How long the "Password updated" confirmation lingers before we send the user to
+// sign in — long enough to register the success, short enough to feel automatic.
+const REDIRECT_DELAY_MS = 1500;
+
 export function ResetPasswordForm({ email }: { email: string }) {
+  const router = useRouter();
   const [state, formAction, pending] = useActionState(
     setNewPassword,
     initialResetState,
   );
 
-  if (state.step === "done") {
+  // The action signs the recovery session out on success, so once we're "done"
+  // route to the normal login. replace() keeps the now-consumed reset page out of
+  // history — a Back press would otherwise land on an expired link.
+  const done = state.step === "done";
+  useEffect(() => {
+    if (!done) return;
+    const timer = setTimeout(() => router.replace("/login"), REDIRECT_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [done, router]);
+
+  if (done) {
     return (
       <div style={{ textAlign: "center", padding: "8px 0" }}>
         <div
@@ -28,7 +44,7 @@ export function ResetPasswordForm({ email }: { email: string }) {
         </div>
         <h1 className="h3">Password updated</h1>
         <p className="text-muted caption" style={{ margin: "6px 0 18px" }}>
-          You can now sign in with your new password.
+          Taking you to sign in…
         </p>
         <Link className="btn btn-primary btn-block" href="/login">
           Go to sign in
