@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 
 import { Icon } from "@/components/icon";
+import { Select } from "@/components/select";
 
 import { reassignCashier } from "./actions";
 import type { ShopOption } from "./invitations-panel";
@@ -94,19 +95,19 @@ export function ReassignShopButton({
               </p>
               <div className="field">
                 <label htmlFor="reassignShop">Shop</label>
-                <select
+                <Select
                   id="reassignShop"
-                  className="input"
                   value={selected}
-                  onChange={(e) => setSelected(e.target.value)}
+                  onChange={setSelected}
+                  options={shops.map((shop) => ({
+                    value: shop.id,
+                    label: shop.name,
+                    icon: "store" as const,
+                  }))}
+                  triggerIcon="store"
                   disabled={pending}
-                >
-                  {shops.map((shop) => (
-                    <option key={shop.id} value={shop.id}>
-                      {shop.name}
-                    </option>
-                  ))}
-                </select>
+                  block
+                />
               </div>
               {error && (
                 <div

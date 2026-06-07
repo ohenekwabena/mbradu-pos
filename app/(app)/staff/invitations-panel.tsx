@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 
 import { Icon } from "@/components/icon";
+import { Select } from "@/components/select";
 
 import {
   cancelInvitation,
@@ -74,6 +75,19 @@ function InviteCard({
   const [state, formAction, pending] = useActionState(sendInvitation, INITIAL);
   const formRef = useRef<HTMLFormElement>(null);
   const noShops = shops.length === 0;
+  // The shop picker is the shared Select (custom, not a native <select>), so its
+  // value rides a hidden field rather than the form's own controls.
+  const [shopId, setShopId] = useState(shops[0]?.id ?? "");
+
+  // A successful invite clears the form. Native fields reset via the form's own
+  // reset() in the effect below; the controlled shop dropdown is reset here
+  // during render — React's sanctioned alternative to setState-in-an-effect —
+  // each time a fresh result lands.
+  const [handledState, setHandledState] = useState(state);
+  if (state !== handledState) {
+    setHandledState(state);
+    if (state.status === "success") setShopId(shops[0]?.id ?? "");
+  }
 
   useEffect(() => {
     if (state.status === "success") {
@@ -108,20 +122,20 @@ function InviteCard({
         </div>
         <div className="field" style={{ marginBottom: 14 }}>
           <label htmlFor="invShop">Shop</label>
-          <select
+          <Select
             id="invShop"
-            className="input"
             name="shopId"
-            required
+            value={shopId}
+            onChange={setShopId}
+            options={shops.map((shop) => ({
+              value: shop.id,
+              label: shop.name,
+              icon: "store" as const,
+            }))}
+            triggerIcon="store"
             disabled={noShops}
-            defaultValue={shops[0]?.id ?? ""}
-          >
-            {shops.map((shop) => (
-              <option key={shop.id} value={shop.id}>
-                {shop.name}
-              </option>
-            ))}
-          </select>
+            block
+          />
         </div>
 
         {state.status === "error" && (

@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 
 import { Icon } from "@/components/icon";
+import { Select } from "@/components/select";
 import { CEDI_SYMBOL } from "@/lib/money";
 import { EXPIRY_WINDOW_OPTIONS, MAX_LOW_STOCK_THRESHOLD } from "@/lib/settings";
 
@@ -67,6 +68,9 @@ function SettingsForm({
   const [state, formAction, pending] = useActionState(saveSettings, INITIAL);
   // The stepper is local client state, serialized to a hidden field on submit.
   const [threshold, setThreshold] = useState(lowStockThreshold);
+  // The window menu is the shared Select (a custom dropdown, not a native
+  // <select>), so its value rides a hidden field too — strings, like FormData.
+  const [expiryDays, setExpiryDays] = useState(String(expiryWarningDays));
 
   useEffect(() => {
     if (state.status === "success") onSaved(state.message);
@@ -93,7 +97,7 @@ function SettingsForm({
             low. One business-wide value — not set per shop.
           </div>
         </div>
-        <div className="stepper" style={{ height: 40 }}>
+        <div className="stepper" style={{ height: 40, justifySelf: "start" }}>
           <button
             type="button"
             onClick={decrease}
@@ -125,18 +129,16 @@ function SettingsForm({
           </div>
         </div>
         <div>
-          <select
-            className="input"
+          <Select
             name="expiry_warning_days"
-            defaultValue={expiryWarningDays}
-            style={{ justifySelf: "start" }}
-          >
-            {windowOptions.map((days) => (
-              <option key={days} value={days}>
-                {days} days
-              </option>
-            ))}
-          </select>
+            value={expiryDays}
+            onChange={setExpiryDays}
+            options={windowOptions.map((days) => ({
+              value: String(days),
+              label: `${days} days`,
+            }))}
+            aria-label="Expiry-warning window"
+          />
         </div>
       </div>
 

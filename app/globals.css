@@ -507,12 +507,17 @@ textarea.input {
   font-size: 12px;
   color: var(--muted);
 }
-.field .err {
+.err {
   font-size: 12px;
   color: var(--danger);
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.err svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
 }
 .input.invalid {
   border-color: var(--danger);
@@ -856,16 +861,21 @@ table.tbl tr:last-child td {
 .scope-note {
   color: var(--muted);
   font-size: 13px;
+  line-height: 1.45;
   margin: -4px 0 16px;
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
 }
 .scope-note svg {
   width: 15px;
   height: 15px;
+  margin-top: 2px;
   color: var(--primary);
   flex: none;
+}
+.scope-note span {
+  min-width: 0;
 }
 .it-name {
   font-weight: 500;
@@ -992,6 +1002,10 @@ table.tbl tr:last-child td {
   box-shadow: var(--sh-lg);
   width: min(480px, calc(100vw - 32px));
   padding: 24px;
+  /* Modals render inline at their trigger (no portal), so pin the text
+     alignment here — otherwise the body inherits it from wherever the trigger
+     lives, e.g. the right-aligned `.num` actions cell on the Staff roster. */
+  text-align: left;
 }
 .modal .m-head {
   display: flex;
@@ -1302,6 +1316,36 @@ table.tbl tr:last-child td {
   text-transform: uppercase;
   color: var(--faint);
   padding: 6px 10px 4px;
+}
+/* The switcher's label span — grows so the chevron sits flush right, and
+   truncates long shop names rather than stretching the pill. */
+.shop-switcher .lbl {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shop-switcher:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.shop-switcher:disabled:hover {
+  background: var(--surface);
+}
+/* Form-field variant (Settings, Staff): fill the field width instead of
+   hugging content like the top bar; the menu tracks the trigger's width. */
+.shop-ctx.block {
+  display: block;
+}
+.shop-ctx.block .shop-switcher {
+  display: flex;
+  width: 100%;
+}
+.shop-ctx.block .shop-menu {
+  min-width: 0;
+  width: 100%;
 }
 
 /* outline neutral chip — "not carried (this shop)" */
