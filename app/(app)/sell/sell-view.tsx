@@ -188,7 +188,10 @@ export function SellView({
   return (
     <>
       <div className="scope-note">
-        <Icon name="store" /> Ringing up at <strong>{shopName}</strong> — a sale belongs to one shop.
+        <Icon name="store" />
+        <span>
+          Ringing up at <strong>{shopName}</strong> — a sale belongs to one shop.
+        </span>
       </div>
 
       <div className={"sell" + (cart.size > 0 ? " has-fab" : "")}>

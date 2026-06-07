@@ -91,13 +91,18 @@ export function SalesView({
       <div className="scope-note">
         {scope.mode === "shop" ? (
           <>
-            <Icon name="store" /> Showing <strong>{scope.shopName}</strong> — switch shops in the
-            top bar.
+            <Icon name="store" />
+            <span>
+              Showing <strong>{scope.shopName}</strong> — switch shops in the top bar.
+            </span>
           </>
         ) : (
           <>
-            <Icon name="dashboard" /> Showing <strong>all shops</strong> combined. Pick a shop in
-            the top bar to narrow.
+            <Icon name="dashboard" />
+            <span>
+              Showing <strong>all shops</strong> combined. Pick a shop in the top bar to
+              narrow.
+            </span>
           </>
         )}
       </div>

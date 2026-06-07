@@ -236,13 +236,19 @@ export function CatalogView({
           <div className="scope-note">
             {scope.mode === "shop" ? (
               <>
-                <Icon name="store" /> Showing <strong>{scope.shopName}</strong> — switch
-                shops in the top bar. Catalog &amp; prices are business-wide.
+                <Icon name="store" />
+                <span>
+                  Showing <strong>{scope.shopName}</strong> — switch shops in the top
+                  bar. Catalog &amp; prices are business-wide.
+                </span>
               </>
             ) : (
               <>
-                <Icon name="dashboard" /> Showing <strong>all shops</strong> combined.
-                Pick a shop in the top bar to see and edit one shop&rsquo;s stock.
+                <Icon name="dashboard" />
+                <span>
+                  Showing <strong>all shops</strong> combined. Pick a shop in the top
+                  bar to see and edit one shop&rsquo;s stock.
+                </span>
               </>
             )}
           </div>
