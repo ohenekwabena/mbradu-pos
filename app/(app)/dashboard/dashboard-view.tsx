@@ -2,13 +2,19 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
+import { DatePicker } from "@/components/date-picker";
 import { CATEGORY_LABEL, formatExpiry } from "@/lib/catalog";
-import type {
-  DashboardViewModel,
-  PaymentMixSlice,
-  StockHealthEntry,
-  TrendPoint,
+import {
+  DASHBOARD_RANGES,
+  RANGE_LABEL,
+  type DashboardRange,
+  type DashboardViewModel,
+  type PaymentMixSlice,
+  type StockHealthEntry,
+  type TrendGranularity,
+  type TrendPoint,
 } from "@/lib/dashboard";
 import { format } from "@/lib/money";
 import type { PaymentMethod } from "@/lib/sale";
@@ -33,6 +39,17 @@ const METHOD_LABEL: Record<PaymentMethod, string> = {
   transfer: "Transfer",
 };
 
+/** How the trend's bucket size reads in the chart legend. */
+const GRANULARITY_LABEL: Record<TrendGranularity, string> = {
+  hour: "Hourly",
+  day: "Daily",
+  week: "Weekly",
+  month: "Monthly",
+  year: "Yearly",
+};
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
 /** Fixed payment-mix palette (per the design — a violet sequence, independent of
  * the themeable accent so the four methods stay visually distinct). */
 const MIX_COLORS: Record<PaymentMethod, string> = {
@@ -47,12 +64,35 @@ const MIX_COLORS: Record<PaymentMethod, string> = {
  * order, so the top Shop is always the themeable violet. */
 const SHOP_COLORS = ["#673ab7", "#2e7d32", "#f57c00", "#ec407a", "#0288d1", "#00897b"];
 
+type Window = DashboardViewModel["window"];
+
+/** "2026-06-05" → "5 Jun 2026" (the dates are already UTC calendar days). */
+function prettyDate(dateKey: string): string {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  if (!y || !m || !d) return dateKey;
+  return `${d} ${MONTHS[m - 1]} ${y}`;
+}
+
+/** Human range, e.g. "5 Jun 2026" (single day) or "7 May – 5 Jun 2026". */
+function rangeText(window: Window): string {
+  if (window.fromDate === window.toDate) return prettyDate(window.fromDate);
+  return `${prettyDate(window.fromDate)} – ${prettyDate(window.toDate)}`;
+}
+
+/** The friendly period name for card captions — the preset label, or the explicit
+ * dates for a custom span. */
+function periodLabel(window: Window): string {
+  return window.range === "custom" ? rangeText(window) : RANGE_LABEL[window.range];
+}
+
 /**
  * The dashboard surface. Presentational only — every figure comes precomputed
  * from the pure {@link DashboardViewModel}; this component just lays it out and
- * formats money via the Money module. The Owner sees the cost-derived KPIs, the
- * revenue trend, the by-Shop revenue comparison (all-Shops scope only), and the
- * payment mix; stock health and the recent-sales feed are shared. MP-24, MP-25.
+ * formats money via the Money module. The Owner gets a **date-range selector**
+ * that drives every flow figure (revenue, profit, payment mix, by-Shop
+ * comparison, and the trend); a Cashier is pinned to Today with no selector.
+ * Stock health and inventory value are point-in-time ("as of now"), independent
+ * of the range. MP-24, MP-25.
  */
 export function DashboardView({ vm }: { vm: DashboardViewModel }) {
   const isOwner = vm.owner !== undefined;
@@ -60,6 +100,8 @@ export function DashboardView({ vm }: { vm: DashboardViewModel }) {
 
   return (
     <>
+      {isOwner && <RangeToolbar window={vm.window} />}
+
       <div className={`kpi-row section ${isOwner ? "" : "kpi-row-2"}`}>
         {isOwner ? <OwnerKpis vm={vm} /> : <CashierKpis vm={vm} />}
       </div>
@@ -83,10 +125,81 @@ export function DashboardView({ vm }: { vm: DashboardViewModel }) {
 }
 
 // ---------------------------------------------------------------------------
+// Date-range selector (Owner only).
+// ---------------------------------------------------------------------------
+
+/**
+ * The Owner's report range: preset chips plus a Custom from/to date picker, all
+ * URL-driven (`router.push` → the server re-queries the bounded window), mirroring
+ * the `/sales` archive. The drafts seed from the active window; the page keys this
+ * view by the window, so navigating re-seeds them. Spans may cross years.
+ */
+function RangeToolbar({ window }: { window: Window }) {
+  const router = useRouter();
+  const [fromDraft, setFromDraft] = useState(window.fromDate);
+  const [toDraft, setToDraft] = useState(window.toDate);
+
+  function goToRange(range: DashboardRange) {
+    if (range === "custom") {
+      router.push(`/dashboard?range=custom&from=${fromDraft}&to=${toDraft}`);
+    } else {
+      router.push(`/dashboard?range=${range}`);
+    }
+  }
+
+  return (
+    <div className="inv-toolbar">
+      <div className="pills">
+        {DASHBOARD_RANGES.map((range) => (
+          <button
+            key={range}
+            type="button"
+            className={"pill" + (window.range === range ? " active" : "")}
+            onClick={() => goToRange(range)}
+          >
+            {RANGE_LABEL[range]}
+          </button>
+        ))}
+      </div>
+
+      {window.range === "custom" && (
+        <div className="date-range">
+          <DatePicker
+            value={fromDraft}
+            onChange={setFromDraft}
+            max={toDraft || undefined}
+            aria-label="From date"
+          />
+          <span className="sep">–</span>
+          <DatePicker
+            value={toDraft}
+            onChange={setToDraft}
+            min={fromDraft || undefined}
+            aria-label="To date"
+          />
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => goToRange("custom")}
+            disabled={!fromDraft || !toDraft}
+          >
+            Apply
+          </button>
+        </div>
+      )}
+
+      <span className="caption text-faint" style={{ marginLeft: "auto" }}>
+        {rangeText(window)}
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // KPI rows.
 // ---------------------------------------------------------------------------
 
-/** Today-vs-yesterday delta (or a muted dash when there's no baseline). */
+/** Period-over-period delta (or a muted dash when there's no baseline). */
 function Delta({ ratio }: { ratio: number | null }) {
   if (ratio === null) return <span className="delta">—</span>;
   const up = ratio >= 0;
@@ -99,18 +212,20 @@ function Delta({ ratio }: { ratio: number | null }) {
 
 function OwnerKpis({ vm }: { vm: DashboardViewModel }) {
   const owner = vm.owner!;
+  const isToday = vm.window.range === "today";
+  const deltaCtx = isToday ? "from yesterday" : "vs prev. period";
   return (
     <>
       <div className="kpi">
-        <div className="kpi-label">Today&rsquo;s Revenue</div>
+        <div className="kpi-label">{isToday ? "Today’s Revenue" : "Revenue"}</div>
         <div className="kpi-top">
           <span className="kpi-unit">GH₵</span>
-          <span className="kpi-value">{cedisPlain(vm.today.revenuePesewas)}</span>
+          <span className="kpi-value">{cedisPlain(vm.period.revenuePesewas)}</span>
         </div>
         <div className="kpi-foot">
           <div>
             <Delta ratio={vm.revenueDeltaRatio} />
-            <span className="ctx">from yesterday</span>
+            <span className="ctx">{deltaCtx}</span>
           </div>
           <Sparkline values={vm.revenueSpark} color="var(--primary)" />
         </div>
@@ -166,15 +281,15 @@ function CashierKpis({ vm }: { vm: DashboardViewModel }) {
       <div className="kpi">
         <div className="kpi-label">Today&rsquo;s Sales</div>
         <div className="kpi-top">
-          <span className="kpi-value">{vm.today.salesCount}</span>
-          <span className="kpi-unit">{vm.today.salesCount === 1 ? "sale" : "sales"}</span>
+          <span className="kpi-value">{vm.period.salesCount}</span>
+          <span className="kpi-unit">{vm.period.salesCount === 1 ? "sale" : "sales"}</span>
         </div>
       </div>
       <div className="kpi">
         <div className="kpi-label">Today&rsquo;s Revenue</div>
         <div className="kpi-top">
           <span className="kpi-unit">GH₵</span>
-          <span className="kpi-value">{cedisPlain(vm.today.revenuePesewas)}</span>
+          <span className="kpi-value">{cedisPlain(vm.period.revenuePesewas)}</span>
         </div>
         <div className="kpi-foot">
           <div>
@@ -193,8 +308,7 @@ function CashierKpis({ vm }: { vm: DashboardViewModel }) {
 // ---------------------------------------------------------------------------
 
 function RevenueCard({ vm }: { vm: DashboardViewModel }) {
-  const [range, setRange] = useState<"week" | "month">("month");
-  const points = range === "week" ? vm.trend.week : vm.trend.month;
+  const points = vm.trend;
   const total = points.reduce((sum, p) => sum + p.revenuePesewas, 0);
 
   return (
@@ -204,24 +318,8 @@ function RevenueCard({ vm }: { vm: DashboardViewModel }) {
           <h2 className="h2">Revenue Overview</h2>
           <div className="legend mt-8">
             <span className="dot" />
-            {range === "week" ? "Last 6 weeks" : "Last 6 months"}
+            {GRANULARITY_LABEL[vm.window.granularity]} · {periodLabel(vm.window)}
           </div>
-        </div>
-        <div className="seg-tabs">
-          <button
-            type="button"
-            className={`pill ${range === "week" ? "active" : ""}`}
-            onClick={() => setRange("week")}
-          >
-            Week
-          </button>
-          <button
-            type="button"
-            className={`pill ${range === "month" ? "active" : ""}`}
-            onClick={() => setRange("month")}
-          >
-            Month
-          </button>
         </div>
       </div>
 
@@ -234,8 +332,9 @@ function RevenueCard({ vm }: { vm: DashboardViewModel }) {
   );
 }
 
-/** A dependency-free SVG area chart over the (≤ 6) trend points, with a hover
- * tooltip. The viewBox scales to the card width via `width: 100%`. */
+/** A dependency-free SVG area chart over the trend points, with a hover tooltip.
+ * The viewBox scales to the card width via `width: 100%`. X-axis labels are
+ * thinned when there are many buckets, so a 24-hour or 30-day span doesn't crowd. */
 function RevenueChart({ points }: { points: TrendPoint[] }) {
   const [active, setActive] = useState<number | null>(null);
 
@@ -264,6 +363,13 @@ function RevenueChart({ points }: { points: TrendPoint[] }) {
 
   const gridYs = [0, 0.5, 1].map((f) => padT + plotH * f);
 
+  // Show at most ~8 x-labels: the first, every k-th, and always the last.
+  const labelEvery = Math.max(1, Math.ceil(points.length / 8));
+  const showLabel = (i: number) => i % labelEvery === 0 || i === points.length - 1;
+
+  // Hover dots scale down when the series is dense (hourly / daily) so they don't merge.
+  const dotR = points.length > 14 ? 2.5 : 3.5;
+
   return (
     <div className="chart-card-inner">
       <svg viewBox={`0 0 ${W} ${H}`} className="rev-chart" role="img" aria-label="Revenue trend">
@@ -282,13 +388,7 @@ function RevenueChart({ points }: { points: TrendPoint[] }) {
         <path d={geom.line} className="rev-line" fill="none" />
 
         {geom.xs.map((x, i) => (
-          <circle
-            key={i}
-            cx={x}
-            cy={geom.ys[i]}
-            r={active === i ? 5 : 3.5}
-            className="rev-dot"
-          />
+          <circle key={i} cx={x} cy={geom.ys[i]} r={active === i ? dotR + 1.5 : dotR} className="rev-dot" />
         ))}
 
         {/* Per-point hover bands (invisible) drive the tooltip. */}
@@ -309,11 +409,13 @@ function RevenueChart({ points }: { points: TrendPoint[] }) {
           );
         })}
 
-        {points.map((p, i) => (
-          <text key={i} x={geom.xs[i]} y={H - 10} className="rev-xlabel" textAnchor="middle">
-            {p.label}
-          </text>
-        ))}
+        {points.map((p, i) =>
+          showLabel(i) ? (
+            <text key={i} x={geom.xs[i]} y={H - 10} className="rev-xlabel" textAnchor="middle">
+              {p.label}
+            </text>
+          ) : null,
+        )}
       </svg>
 
       {active !== null && (
@@ -361,7 +463,7 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
 // Revenue by shop (all-Shops comparison).
 // ---------------------------------------------------------------------------
 
-/** The by-Shop revenue comparison: one bar per Shop, today's revenue, ranked
+/** The by-Shop revenue comparison: one bar per Shop over the period, ranked
  * high→low (the view-model already sorted them). Bars are sized against the top
  * Shop and coloured by rank from {@link SHOP_COLORS}. Rendered only in the
  * all-Shops scope; a single-Shop drill-down has nothing to compare. */
@@ -373,12 +475,12 @@ function ShopComparisonCard({ vm }: { vm: DashboardViewModel }) {
     <div className="card">
       <div className="card-head" style={{ marginBottom: 12 }}>
         <h2 className="h2">Revenue by shop</h2>
-        <span className="caption text-faint">Today</span>
+        <span className="caption text-faint">{periodLabel(vm.window)}</span>
       </div>
 
       {max === 0 ? (
         <div className="text-faint" style={{ padding: "4px 0" }}>
-          No sales yet today.
+          No sales in this period yet.
         </div>
       ) : (
         <div className="rbs">
@@ -413,7 +515,7 @@ function PaymentMixCard({ vm }: { vm: DashboardViewModel }) {
     <div className="card">
       <div className="card-head" style={{ marginBottom: 10 }}>
         <h2 className="h2">Payment mix</h2>
-        <span className="caption text-faint">Today</span>
+        <span className="caption text-faint">{periodLabel(vm.window)}</span>
       </div>
 
       {hasTakings ? (
@@ -469,6 +571,7 @@ function StockHealthCard({
     <div className="card">
       <div className="card-head" style={{ marginBottom: 6 }}>
         <h2 className="h2">Stock health</h2>
+        <span className="caption text-faint">As of now</span>
       </div>
       <div className="seg-tabs" style={{ marginBottom: 8 }}>
         <button type="button" className={`pill ${tab === "low" ? "active" : ""}`} onClick={() => setTab("low")}>

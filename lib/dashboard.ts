@@ -1,18 +1,30 @@
 /**
  * Dashboard view-model — the **pure transform** from a window of Sales, the
  * per-Shop stock, the catalog, the business-wide settings, the acting **role**,
- * and the active **Shop scope** into the figures the dashboard renders: today's
- * sales count and revenue, the revenue trend (by week / by month), the by-Shop
- * revenue comparison (in the all-Shops rollup), the payment mix, stock health
- * (low / out / expiring), a recent-sales feed, and — for the Owner only — cost
- * of goods, gross profit / margin, and on-hand inventory value.
+ * the active **Shop scope**, and a selected **date-range window** into the
+ * figures the dashboard renders: the period's sales count and revenue, the
+ * revenue trend (auto-bucketed to the span — by hour / day / week / month /
+ * year), the by-Shop revenue comparison (in the all-Shops rollup), the payment
+ * mix, stock health (low / out / expiring), a recent-sales feed, and — for the
+ * Owner only — cost of goods, gross profit / margin, and on-hand inventory value.
  *
- * Like the Money, Sale, Stock, and Settings modules it sits beside, this file is
- * deliberately free of any server / Supabase import, so the dashboard Server
- * Component, a Cashier's trimmed dashboard (MP-26), and the unit tests can all
- * share one tested core. The Server Component does the I/O (it loads the rows and
- * stamps `today`), then hands everything to {@link buildDashboard}; the result is
- * presentational data only.
+ * **Date-range window.** The Owner picks a range (Today / last 7 / last 30 days /
+ * this month / this year / a custom span that may cross years); a Cashier is
+ * always pinned to Today. The range is resolved once, server-side, by
+ * {@link resolveDashboardWindow} into a {@link ResolvedDashboardWindow}, then
+ * every *flow* figure (revenue, count, COGS/profit/margin, payment mix, by-Shop
+ * comparison, the trend) is computed over that window. **Point-in-time** figures
+ * — stock health and inventory value — are always "as of now" (current stock),
+ * independent of the window, because there is no historical stock to value a past
+ * date. The day-over-day delta generalises to **vs the immediately-preceding
+ * period** of equal length.
+ *
+ * Like the Money, Sale, Stock, Settings, and Sales-list modules it sits beside,
+ * this file is deliberately free of any server / Supabase import, so the
+ * dashboard Server Component, the client view, and the unit tests can all share
+ * one tested core. The Server Component does the I/O (it resolves the window,
+ * loads the rows, and stamps `today`), then hands everything to
+ * {@link buildDashboard}; the result is presentational data only.
  *
  * **Visibility-policy.** Money that derives from *cost* — COGS, gross profit,
  * margin, inventory value — is Owner-only (CONTEXT.md, ADR-0005). Those figures
@@ -31,13 +43,14 @@
  *
  * **Determinism.** `today` is passed in as a UTC `YYYY-MM-DD` string (the caller
  * stamps it server-side — the business runs in Ghana / GMT, so the UTC calendar
- * day is the local one), and every bucket boundary is derived from it with
- * explicit UTC date math — no clock is read here, so the transform is fully
+ * day is the local one), and every bucket / window boundary is derived from it
+ * with explicit UTC date math — no clock is read here, so the transform is fully
  * unit-testable and free of timezone drift.
  *
  * PRD → "Dashboard view-model" and stories 31–38, 44. MP-24 ships the Owner
  * all-Shops rollup; MP-25 adds per-Shop drill-down & the revenue-by-Shop
- * comparison; MP-26 the Cashier variant and its hard redaction test.
+ * comparison; MP-26 the Cashier variant and its hard redaction test. The Owner
+ * date-range report generalises the today-only figures to any span.
  */
 
 import { can, type Actor } from "@/lib/auth/visibility";
@@ -65,10 +78,10 @@ export interface DashboardPayment {
 }
 
 /**
- * A completed Sale within the trend window, with the seller's display name
+ * A completed Sale within the loaded window, with the seller's display name
  * resolved server-side (the `sales.seller` FK points at `auth.users`, so the
  * name is joined via `profiles` before it reaches here). `createdAt` is the raw
- * ISO timestamp; all day/week/month bucketing is done in UTC.
+ * ISO timestamp; all hour/day/week/month/year bucketing is done in UTC.
  */
 export interface DashboardSale {
   id: string;
@@ -119,14 +132,182 @@ export interface DashboardShop {
  */
 export type DashboardScope = { mode: "all" } | { mode: "shop"; shopId: string };
 
+// ---------------------------------------------------------------------------
+// Date-range window — the span the flow figures are computed over.
+// ---------------------------------------------------------------------------
+
+/** A date-range preset. `custom` reads explicit `from`/`to` dates (may span years).
+ * `month`/`year` are to-date (1st of this month / Jan 1 → today). */
+export type DashboardRange = "today" | "7d" | "30d" | "month" | "year" | "custom";
+
+/** The presets, in display order. */
+export const DASHBOARD_RANGES: readonly DashboardRange[] = [
+  "today",
+  "7d",
+  "30d",
+  "month",
+  "year",
+  "custom",
+];
+
+/** Default range — Today, so the dashboard opens on the day at a glance. */
+export const DEFAULT_DASHBOARD_RANGE: DashboardRange = "today";
+
+/** Short label per range (for the preset pills + KPI captions). */
+export const RANGE_LABEL: Record<DashboardRange, string> = {
+  today: "Today",
+  "7d": "Last 7 days",
+  "30d": "Last 30 days",
+  month: "This month",
+  year: "This year",
+  custom: "Custom",
+};
+
+/** How the trend chart buckets the window — picked from the range / span. */
+export type TrendGranularity = "hour" | "day" | "week" | "month" | "year";
+
+/**
+ * A resolved, bounded date window: the inclusive day bounds (for the inputs /
+ * labels), the half-open instant bounds (for the `created_at` query), the lower
+ * bound of the immediately-preceding equal-length period (for the delta), and the
+ * trend bucket granularity.
+ */
+export interface ResolvedDashboardWindow {
+  range: DashboardRange;
+  /** Inclusive first day (UTC `YYYY-MM-DD`). */
+  fromDate: string;
+  /** Inclusive last day (UTC `YYYY-MM-DD`). */
+  toDate: string;
+  /** Inclusive lower-bound instant — UTC midnight of {@link fromDate}. */
+  startIso: string;
+  /** **Exclusive** upper-bound instant — UTC midnight *after* {@link toDate}. */
+  endIso: string;
+  /** Inclusive lower-bound instant of the preceding equal-length window — the
+   * baseline for the period-over-period delta (`[prevStartIso, startIso)`). */
+  prevStartIso: string;
+  /** Trend bucket size for this window. */
+  granularity: TrendGranularity;
+}
+
+/**
+ * Resolve the date window from `today` (UTC `YYYY-MM-DD`) and the raw URL params.
+ * Presets count back from `today`: `today` is the single day, `7d`/`30d` the last
+ * 7/30 days, `month`/`year` are to-date (from the 1st of the month / Jan 1).
+ * `custom` reads `from`/`to` — both must be valid `YYYY-MM-DD`, else it falls back
+ * to Today; reversed dates are swapped so `fromDate ≤ toDate`, and the span may
+ * cross years. Pure and UTC throughout (mirrors `resolveSalesWindow`).
+ */
+export function resolveDashboardWindow(
+  today: string,
+  params: { range?: string | null; from?: string | null; to?: string | null },
+): ResolvedDashboardWindow {
+  const range = parseDashboardRange(params.range);
+
+  if (range === "custom") {
+    const from = isDateKey(params.from) ? params.from : null;
+    const to = isDateKey(params.to) ? params.to : null;
+    if (from && to) {
+      const [fromDate, toDate] = from <= to ? [from, to] : [to, from];
+      return windowFromDays("custom", fromDate, toDate);
+    }
+    // Incomplete/invalid custom range → fall back to Today.
+    return windowFromDays("today", today, today);
+  }
+
+  let fromDate: string;
+  switch (range) {
+    case "7d":
+      fromDate = addDaysUtc(today, -6);
+      break;
+    case "30d":
+      fromDate = addDaysUtc(today, -29);
+      break;
+    case "month":
+      fromDate = monthStartKey(today);
+      break;
+    case "year":
+      fromDate = yearStartKey(today);
+      break;
+    case "today":
+    default:
+      fromDate = today;
+      break;
+  }
+  return windowFromDays(range, fromDate, today);
+}
+
+/** Normalise a raw `range` param to a known preset, defaulting to {@link DEFAULT_DASHBOARD_RANGE}. */
+export function parseDashboardRange(raw: string | null | undefined): DashboardRange {
+  return DASHBOARD_RANGES.includes(raw as DashboardRange)
+    ? (raw as DashboardRange)
+    : DEFAULT_DASHBOARD_RANGE;
+}
+
+/** Assemble a window from its inclusive day bounds (instant bounds + previous
+ * period + granularity all derive from the range and span). */
+function windowFromDays(
+  range: DashboardRange,
+  fromDate: string,
+  toDate: string,
+): ResolvedDashboardWindow {
+  const span = daySpan(fromDate, toDate);
+  return {
+    range,
+    fromDate,
+    toDate,
+    startIso: `${fromDate}T00:00:00.000Z`,
+    endIso: `${addDaysUtc(toDate, 1)}T00:00:00.000Z`,
+    prevStartIso: `${addDaysUtc(fromDate, -span)}T00:00:00.000Z`,
+    granularity: granularityFor(range, span),
+  };
+}
+
+/** Trend bucket size: presets read naturally (Today → hourly, week/month spans →
+ * daily, this-year → monthly); a custom span auto-scales by length. */
+function granularityFor(range: DashboardRange, span: number): TrendGranularity {
+  switch (range) {
+    case "today":
+      return "hour";
+    case "7d":
+    case "30d":
+    case "month":
+      return "day";
+    case "year":
+      return "month";
+    default:
+      return granularityForSpan(span); // custom
+  }
+}
+
+/** Auto-scale a custom span to a sensible bucket count: hour ≤1d, day ≤31d,
+ * week ≤~26w, month ≤~3y, else year. */
+function granularityForSpan(span: number): TrendGranularity {
+  if (span <= 1) return "hour";
+  if (span <= 31) return "day";
+  if (span <= 182) return "week";
+  if (span <= 1095) return "month";
+  return "year";
+}
+
+// ---------------------------------------------------------------------------
+// Inputs (cont.) — everything {@link buildDashboard} needs; pure data, no I/O.
+// ---------------------------------------------------------------------------
+
 /** Everything {@link buildDashboard} needs; pure data, no I/O. */
 export interface DashboardInput {
   actor: Actor;
   scope: DashboardScope;
-  /** Today as a UTC `YYYY-MM-DD` string, stamped server-side. */
+  /** Today as a UTC `YYYY-MM-DD` string, stamped server-side (for stock expiry). */
   today: string;
-  /** Completed Sales within the trend window (≥ the last 6 months). */
+  /** The resolved date-range window every flow figure is computed over. */
+  window: ResolvedDashboardWindow;
+  /** Completed Sales spanning the window **and** the preceding period — i.e.
+   * `[window.prevStartIso, window.endIso)` — so both the period figures and the
+   * period-over-period delta can be computed from one set. */
   sales: DashboardSale[];
+  /** The latest Sales for the recent-sales feed, newest-first (loaded
+   * independently of the window so the feed is never empty). Capped here too. */
+  recentFeedSales: DashboardSale[];
   /** Every per-Shop stock row in view (Owner: all Shops; Cashier: their Shop). */
   stock: DashboardStock[];
   /** Catalog facts keyed by Item id (name/category/expiry/cost). */
@@ -140,32 +321,32 @@ export interface DashboardInput {
 // Outputs — presentational figures.
 // ---------------------------------------------------------------------------
 
-/** One point on the revenue trend: a period's label, its UTC start, its revenue. */
+/** One point on the revenue trend: a bucket's label, its UTC start, its revenue. */
 export interface TrendPoint {
   label: string;
   startIso: string;
   revenuePesewas: Pesewas;
 }
 
-/** One method's slice of today's takings: amount and its share of the total. */
+/** One method's slice of the period's takings: amount and its share of the total. */
 export interface PaymentMixSlice {
   method: PaymentMethod;
   label: string;
   amountPesewas: Pesewas;
-  /** Fraction of today's total payments, 0–1 (0 when nothing was taken). */
+  /** Fraction of the period's total payments, 0–1 (0 when nothing was taken). */
   share: number;
 }
 
 /**
- * One Shop's row in the by-Shop revenue comparison: today's revenue and its
- * share of all Shops' today total. The Owner sees this only in the all-Shops
+ * One Shop's row in the by-Shop revenue comparison: the period's revenue and its
+ * share of all Shops' period total. The Owner sees this only in the all-Shops
  * rollup (there is nothing to compare against from inside one Shop).
  */
 export interface ShopRevenueEntry {
   shopId: string;
   shopName: string;
   revenuePesewas: Pesewas;
-  /** This Shop's share of all Shops' today revenue, 0–1 (0 when none sold). */
+  /** This Shop's share of all Shops' period revenue, 0–1 (0 when none sold). */
   share: number;
 }
 
@@ -199,13 +380,13 @@ export interface StockHealthEntry {
 
 /** The Owner-only, cost-derived figures (absent from a Cashier's payload). */
 export interface DashboardOwnerFigures {
-  /** Cost of goods sold today (today's lines × current Item cost). */
+  /** Cost of goods sold in the period (period lines × current Item cost). */
   cogsPesewas: Pesewas;
-  /** Today's revenue − today's COGS. */
+  /** The period's revenue − the period's COGS. */
   grossProfitPesewas: Pesewas;
-  /** Gross profit ÷ revenue, 0–1; `null` when there was no revenue today. */
+  /** Gross profit ÷ revenue, 0–1; `null` when there was no revenue in the period. */
   marginRatio: number | null;
-  /** On-hand stock valued at cost, across the scope. */
+  /** On-hand stock valued at cost, across the scope — **as of now**. */
   inventoryValuePesewas: Pesewas;
 }
 
@@ -217,19 +398,31 @@ export type ResolvedScope =
 /** The full dashboard payload. {@link owner} is present iff the actor may view cost. */
 export interface DashboardViewModel {
   scope: ResolvedScope;
-  today: { salesCount: number; revenuePesewas: Pesewas };
-  /** Today's revenue vs yesterday's, as a signed fraction; `null` when yesterday
-   * had no revenue (no baseline to compare against). */
+  /** The resolved window the flow figures cover (for labels + the active pill). */
+  window: {
+    range: DashboardRange;
+    fromDate: string;
+    toDate: string;
+    granularity: TrendGranularity;
+  };
+  /** Sales count + revenue over the selected window (the day, for a Cashier). */
+  period: { salesCount: number; revenuePesewas: Pesewas };
+  /** This period's revenue vs the immediately-preceding equal-length period, as a
+   * signed fraction; `null` when that baseline had no revenue, or when the span is
+   * too long to compare cheaply (> ~1 year). */
   revenueDeltaRatio: number | null;
-  /** Daily revenue for the last 7 days (oldest → today) — drives the KPI spark. */
+  /** Revenue per trend bucket (oldest → newest) — drives the KPI spark; matches
+   * {@link trend}. */
   revenueSpark: Pesewas[];
-  trend: { week: TrendPoint[]; month: TrendPoint[] };
-  /** Today's revenue per Shop, high→low — the all-Shops comparison; empty when
+  /** The revenue trend over the window, auto-bucketed by {@link window.granularity}. */
+  trend: TrendPoint[];
+  /** The period's revenue per Shop, high→low — the all-Shops comparison; empty when
    * scoped to one Shop. The shares sum to 1 (when any revenue), and the figures
-   * reconcile with {@link today} and each Shop's single-Shop rollup. */
+   * reconcile with {@link period} and each Shop's single-Shop rollup. */
   shopComparison: ShopRevenueEntry[];
-  /** Today's takings by method, canonical order, all four methods present. */
+  /** The period's takings by method, canonical order, all four methods present. */
   paymentMix: PaymentMixSlice[];
+  /** Point-in-time (as of now), independent of the window. */
   stockHealth: {
     low: StockHealthEntry[];
     out: StockHealthEntry[];
@@ -244,10 +437,6 @@ export interface DashboardViewModel {
 
 /** How many Sales the recent-sales feed shows. */
 export const RECENT_SALES_LIMIT = 8;
-/** How many trailing periods each trend series spans. */
-export const TREND_PERIODS = 6;
-/** Days in the KPI sparkline window. */
-const SPARK_DAYS = 7;
 
 const MS_PER_DAY = 86_400_000;
 const MONTH_LABELS = [
@@ -261,88 +450,97 @@ const METHOD_LABELS: Record<PaymentMethod, string> = {
   transfer: "Transfer",
 };
 
+/** Spans longer than this skip the period-over-period delta — the preceding
+ * period would double a large scan for little insight. */
+const MAX_DELTA_SPAN_DAYS = 366;
+
 /**
  * Compute the whole dashboard from a window of Sales + stock + catalog +
- * settings, for the given actor and Shop scope. Pure and deterministic.
+ * settings, for the given actor, Shop scope, and date-range window. Pure and
+ * deterministic.
  *
- * The figures, in order: the resolved scope (name/count for the header); today's
- * count & revenue and the day-over-day delta; the 7-day revenue spark; the week
- * and month revenue trends; today's payment mix; stock health (low / out /
- * expiring at the (Item, Shop) grain) and their counts; the recent-sales feed;
- * and, only when the actor may view cost, the Owner block (COGS, gross profit,
- * margin, inventory value).
+ * The figures, in order: the resolved scope (name/count for the header) and
+ * window (range/granularity for the labels); the period's count & revenue and the
+ * period-over-period delta; the trend (auto-bucketed) and the spark derived from
+ * it; the payment mix; the by-Shop comparison (all-Shops rollup); stock health
+ * (low / out / expiring at the (Item, Shop) grain, **as of now**) and their
+ * counts; the recent-sales feed; and, only when the actor may view cost, the
+ * Owner block (COGS, gross profit, margin over the window; inventory value as of
+ * now).
  */
 export function buildDashboard(input: DashboardInput): DashboardViewModel {
-  const { actor, scope, today, settings } = input;
+  const { actor, scope, window, today, settings } = input;
 
   const shopName = new Map(input.shops.map((shop) => [shop.id, shop.name]));
   const itemsById = new Map(input.items.map((item) => [item.id, item]));
 
-  // Scope the Sales and stock the figures are computed from.
-  const sales =
-    scope.mode === "shop"
-      ? input.sales.filter((sale) => sale.shopId === scope.shopId)
-      : input.sales;
-  const stock =
-    scope.mode === "shop"
-      ? input.stock.filter((row) => row.shopId === scope.shopId)
-      : input.stock;
+  // Scope the Sales, feed, and stock the figures are computed from. A Cashier (or
+  // an Owner drilled into one Shop) sees only their Shop; the all-Shops rollup
+  // keeps everything. Defence-in-depth: even if the loader pre-scoped, this is a
+  // no-op, never a leak.
+  const inScope = <T extends { shopId: string }>(rows: readonly T[]): T[] =>
+    rows.filter((row) => scope.mode !== "shop" || row.shopId === scope.shopId);
+
+  const sales = inScope(input.sales);
+  const feed = inScope(input.recentFeedSales);
+  const stock = inScope(input.stock);
 
   const resolvedScope: ResolvedScope =
     scope.mode === "shop"
       ? { mode: "shop", shopId: scope.shopId, shopName: shopName.get(scope.shopId) ?? "this shop" }
       : { mode: "all", shopCount: input.shops.length };
 
-  // --- Day buckets: today, yesterday, and the 7-day spark window. ----------
-  const todayStart = dayStartMs(today);
-  const revenueByDay = new Map<string, Pesewas>();
+  // --- Split the loaded Sales into the window and the preceding period. -----
+  const startMs = toMs(window.startIso) ?? 0;
+  const endMs = toMs(window.endIso) ?? 0;
+  const prevStartMs = toMs(window.prevStartIso) ?? 0;
+
+  const windowSales: DashboardSale[] = [];
+  let prevRevenue: Pesewas = ZERO;
   for (const sale of sales) {
     const ms = toMs(sale.createdAt);
     if (ms === null) continue;
-    const key = utcDateKey(ms);
-    revenueByDay.set(key, (revenueByDay.get(key) ?? 0) + sale.totalPesewas);
+    if (ms >= startMs && ms < endMs) windowSales.push(sale);
+    else if (ms >= prevStartMs && ms < startMs) prevRevenue += sale.totalPesewas;
   }
-  const todayKey = utcDateKey(todayStart);
-  const yesterdayKey = utcDateKey(todayStart - MS_PER_DAY);
-  const todayRevenue = revenueByDay.get(todayKey) ?? ZERO;
-  const yesterdayRevenue = revenueByDay.get(yesterdayKey) ?? ZERO;
+  const windowRevenue = sum(windowSales.map((sale) => sale.totalPesewas));
 
-  const todaySales = sales.filter((sale) => {
-    const ms = toMs(sale.createdAt);
-    return ms !== null && utcDateKey(ms) === todayKey;
-  });
+  // --- Trend (auto-bucketed) + the spark derived from the same buckets. -----
+  const trend = buildTrend(windowSales, window);
+  const revenueSpark = trend.map((point) => point.revenuePesewas);
 
-  const revenueSpark: Pesewas[] = [];
-  for (let i = SPARK_DAYS - 1; i >= 0; i--) {
-    revenueSpark.push(revenueByDay.get(utcDateKey(todayStart - i * MS_PER_DAY)) ?? ZERO);
-  }
+  // --- Period-over-period delta (skipped for very long spans). --------------
+  const span = daySpan(window.fromDate, window.toDate);
+  const revenueDeltaRatio =
+    span > MAX_DELTA_SPAN_DAYS || prevRevenue === 0
+      ? null
+      : (windowRevenue - prevRevenue) / prevRevenue;
 
-  // --- Trends: revenue by week (Mondays) and by calendar month. ------------
-  const trend = {
-    week: buildWeekTrend(sales, todayStart),
-    month: buildMonthTrend(sales, today),
-  };
-
-  // --- By-Shop revenue comparison (today) — the all-Shops rollup only, where
-  // `todaySales` / `todayRevenue` span every Shop, so the rows reconcile with the
-  // headline today figure and with each Shop's single-Shop rollup. -----------
+  // --- By-Shop revenue comparison — the all-Shops rollup only, where
+  // `windowSales` / `windowRevenue` span every Shop, so the rows reconcile with
+  // the headline period figure and with each Shop's single-Shop rollup. -------
   const shopComparison =
-    scope.mode === "all" ? buildShopComparison(todaySales, input.shops, todayRevenue) : [];
+    scope.mode === "all" ? buildShopComparison(windowSales, input.shops, windowRevenue) : [];
 
-  // --- Payment mix (today). ------------------------------------------------
-  const paymentMix = buildPaymentMix(todaySales);
+  // --- Payment mix (period). ------------------------------------------------
+  const paymentMix = buildPaymentMix(windowSales);
 
-  // --- Stock health (scoped). ----------------------------------------------
+  // --- Stock health (scoped, as of now — not the window). -------------------
   const stockHealth = buildStockHealth(stock, itemsById, shopName, settings, today);
 
-  // --- Recent-sales feed (latest, scoped). ---------------------------------
-  const recentSales = buildRecentSales(sales, shopName);
+  // --- Recent-sales feed (latest, scoped — independent of the window). ------
+  const recentSales = buildRecentSales(feed, shopName);
 
   const viewModel: DashboardViewModel = {
     scope: resolvedScope,
-    today: { salesCount: todaySales.length, revenuePesewas: todayRevenue },
-    revenueDeltaRatio:
-      yesterdayRevenue === 0 ? null : (todayRevenue - yesterdayRevenue) / yesterdayRevenue,
+    window: {
+      range: window.range,
+      fromDate: window.fromDate,
+      toDate: window.toDate,
+      granularity: window.granularity,
+    },
+    period: { salesCount: windowSales.length, revenuePesewas: windowRevenue },
+    revenueDeltaRatio,
     revenueSpark,
     trend,
     shopComparison,
@@ -357,7 +555,7 @@ export function buildDashboard(input: DashboardInput): DashboardViewModel {
   // Owner-only, cost-derived figures — built only when the actor may view cost,
   // so they are absent (not nulled) from a Cashier's payload (Visibility-policy).
   if (can(actor, "cost:view")) {
-    viewModel.owner = buildOwnerFigures(todaySales, stock, itemsById, todayRevenue);
+    viewModel.owner = buildOwnerFigures(windowSales, stock, itemsById, windowRevenue);
   }
 
   return viewModel;
@@ -367,11 +565,11 @@ export function buildDashboard(input: DashboardInput): DashboardViewModel {
 // Section builders.
 // ---------------------------------------------------------------------------
 
-/** Today's takings split by method — all four methods, canonical order, each
- * with its share of the day's total (0 when nothing was taken). */
-function buildPaymentMix(todaySales: readonly DashboardSale[]): PaymentMixSlice[] {
+/** The period's takings split by method — all four methods, canonical order, each
+ * with its share of the period's total (0 when nothing was taken). */
+function buildPaymentMix(windowSales: readonly DashboardSale[]): PaymentMixSlice[] {
   const byMethod = new Map<PaymentMethod, Pesewas>();
-  for (const sale of todaySales) {
+  for (const sale of windowSales) {
     for (const payment of sale.payments) {
       byMethod.set(payment.method, (byMethod.get(payment.method) ?? 0) + payment.amountPesewas);
     }
@@ -388,17 +586,17 @@ function buildPaymentMix(todaySales: readonly DashboardSale[]): PaymentMixSlice[
   });
 }
 
-/** Today's revenue per Shop, high→low, with each Shop's share of the day's
- * all-Shops total — the by-Shop comparison. Every Shop appears (a Shop with no
- * sale today is a zero row, sorted last by name), so the rows reconcile exactly
- * with today's all-Shops revenue and with each Shop's single-Shop rollup. */
+/** The period's revenue per Shop, high→low, with each Shop's share of the
+ * period's all-Shops total — the by-Shop comparison. Every Shop appears (a Shop
+ * with no sale is a zero row, sorted last by name), so the rows reconcile exactly
+ * with the period's all-Shops revenue and with each Shop's single-Shop rollup. */
 function buildShopComparison(
-  todaySales: readonly DashboardSale[],
+  windowSales: readonly DashboardSale[],
   shops: readonly DashboardShop[],
-  todayRevenue: Pesewas,
+  windowRevenue: Pesewas,
 ): ShopRevenueEntry[] {
   const revenueByShop = new Map<string, Pesewas>();
-  for (const sale of todaySales) {
+  for (const sale of windowSales) {
     revenueByShop.set(sale.shopId, (revenueByShop.get(sale.shopId) ?? 0) + sale.totalPesewas);
   }
   return shops
@@ -408,7 +606,7 @@ function buildShopComparison(
         shopId: shop.id,
         shopName: shop.name,
         revenuePesewas,
-        share: todayRevenue === 0 ? 0 : revenuePesewas / todayRevenue,
+        share: windowRevenue === 0 ? 0 : revenuePesewas / windowRevenue,
       };
     })
     .sort((a, b) => b.revenuePesewas - a.revenuePesewas || a.shopName.localeCompare(b.shopName));
@@ -417,7 +615,7 @@ function buildShopComparison(
 /** Classify every carried *(Item, Shop)* position in scope into out / low /
  * expiring lists. A position is "out" (qty 0) or "low" (≤ threshold) by
  * {@link stockStatus}; a carried, in-stock cosmetic within the expiry window is
- * additionally flagged "expiring" (it can be both low and expiring). */
+ * additionally flagged "expiring" (it can be both low and expiring). Point-in-time. */
 function buildStockHealth(
   stock: readonly DashboardStock[],
   itemsById: ReadonlyMap<string, DashboardItem>,
@@ -461,7 +659,7 @@ function buildStockHealth(
   return { low: low.sort(byName), out: out.sort(byName), expiring: expiring.sort(byName) };
 }
 
-/** The latest {@link RECENT_SALES_LIMIT} Sales in scope, newest first, shaped
+/** The latest {@link RECENT_SALES_LIMIT} Sales in the feed, newest first, shaped
  * for the feed. Projects the shared {@link shapeSaleRow} (the one shaper the full
  * `/sales` list also uses, MP-32) down to the feed's `RecentSale` fields, so the
  * two screens can never drift — the feed just omits date/customer and caps at 8. */
@@ -486,24 +684,25 @@ function buildRecentSales(
     });
 }
 
-/** Owner-only money: today's COGS and gross profit/margin (from today's lines ×
- * current Item cost), and on-hand inventory value across the scope. A missing
- * cost is treated as 0 (defensive — the Owner reads cost through items_catalog). */
+/** Owner-only money: the period's COGS and gross profit/margin (from the period's
+ * lines × current Item cost), and on-hand inventory value across the scope (as of
+ * now). A missing cost is treated as 0 (defensive — the Owner reads cost through
+ * items_catalog). */
 function buildOwnerFigures(
-  todaySales: readonly DashboardSale[],
+  windowSales: readonly DashboardSale[],
   stock: readonly DashboardStock[],
   itemsById: ReadonlyMap<string, DashboardItem>,
-  todayRevenue: Pesewas,
+  windowRevenue: Pesewas,
 ): DashboardOwnerFigures {
   const cogsParts: Pesewas[] = [];
-  for (const sale of todaySales) {
+  for (const sale of windowSales) {
     for (const line of sale.lines) {
       const cost = itemsById.get(line.itemId)?.costPesewas ?? 0;
       cogsParts.push(multiply(cost, line.quantity));
     }
   }
   const cogsPesewas = sum(cogsParts);
-  const grossProfitPesewas = todayRevenue - cogsPesewas;
+  const grossProfitPesewas = windowRevenue - cogsPesewas;
 
   const valueParts: Pesewas[] = [];
   for (const row of stock) {
@@ -514,68 +713,137 @@ function buildOwnerFigures(
   return {
     cogsPesewas,
     grossProfitPesewas,
-    marginRatio: todayRevenue === 0 ? null : grossProfitPesewas / todayRevenue,
+    marginRatio: windowRevenue === 0 ? null : grossProfitPesewas / windowRevenue,
     inventoryValuePesewas: sum(valueParts),
   };
 }
 
 // ---------------------------------------------------------------------------
-// Trend bucketing — explicit, deterministic UTC date math.
+// Trend bucketing — one generic pass, parameterised by granularity. Explicit,
+// deterministic UTC date math (no clock read).
 // ---------------------------------------------------------------------------
 
-/** Revenue for the last {@link TREND_PERIODS} calendar months, ending with the
- * month containing `today` (oldest → newest). */
-function buildMonthTrend(sales: readonly DashboardSale[], today: string): TrendPoint[] {
-  const revenueByMonth = new Map<string, Pesewas>();
-  for (const sale of sales) {
+/** Revenue per bucket across the window (oldest → newest), at the window's
+ * {@link ResolvedDashboardWindow.granularity}. Every bucket in the span appears
+ * (a bucket with no sale is a zero point), so the chart x-axis is contiguous. */
+function buildTrend(
+  windowSales: readonly DashboardSale[],
+  window: ResolvedDashboardWindow,
+): TrendPoint[] {
+  const buckets = enumerateBuckets(window);
+  const revenueByBucket = new Map<string, Pesewas>();
+  for (const sale of windowSales) {
     const ms = toMs(sale.createdAt);
     if (ms === null) continue;
-    const key = utcMonthKey(ms);
-    revenueByMonth.set(key, (revenueByMonth.get(key) ?? 0) + sale.totalPesewas);
+    const key = bucketKey(window.granularity, ms);
+    revenueByBucket.set(key, (revenueByBucket.get(key) ?? 0) + sale.totalPesewas);
   }
-
-  const [ty, tm] = today.split("-").map(Number);
-  const points: TrendPoint[] = [];
-  for (let i = TREND_PERIODS - 1; i >= 0; i--) {
-    // Step back i months from (ty, tm) without Date arithmetic.
-    const monthIndex = (ty * 12 + (tm - 1)) - i;
-    const year = Math.floor(monthIndex / 12);
-    const month = (monthIndex % 12) + 1; // 1–12
-    const key = `${year}-${pad2(month)}`;
-    points.push({
-      label: MONTH_LABELS[month - 1],
-      startIso: `${key}-01`,
-      revenuePesewas: revenueByMonth.get(key) ?? ZERO,
-    });
-  }
-  return points;
+  return buckets.map((bucket) => ({
+    label: bucket.label,
+    startIso: bucket.startIso,
+    revenuePesewas: revenueByBucket.get(bucket.key) ?? ZERO,
+  }));
 }
 
-/** Revenue for the last {@link TREND_PERIODS} weeks, each starting on its Monday
- * (UTC), ending with the week containing `today` (oldest → newest). */
-function buildWeekTrend(sales: readonly DashboardSale[], todayStart: number): TrendPoint[] {
-  const revenueByWeek = new Map<string, Pesewas>();
-  for (const sale of sales) {
-    const ms = toMs(sale.createdAt);
-    if (ms === null) continue;
-    revenueByWeek.set(
-      mondayKey(ms),
-      (revenueByWeek.get(mondayKey(ms)) ?? 0) + sale.totalPesewas,
-    );
-  }
+interface Bucket {
+  key: string;
+  label: string;
+  startIso: string;
+}
 
-  const thisMonday = mondayStartMs(todayStart);
-  const points: TrendPoint[] = [];
-  for (let i = TREND_PERIODS - 1; i >= 0; i--) {
-    const start = thisMonday - i * 7 * MS_PER_DAY;
-    const key = utcDateKey(start);
-    points.push({
-      label: dayMonthLabel(start),
-      startIso: key,
-      revenuePesewas: revenueByWeek.get(key) ?? ZERO,
+/** The contiguous list of buckets spanning the window, at its granularity. */
+function enumerateBuckets(window: ResolvedDashboardWindow): Bucket[] {
+  const { granularity, fromDate, toDate } = window;
+  switch (granularity) {
+    case "hour":
+      return enumerateHours(fromDate);
+    case "day":
+      return enumerateDays(fromDate, toDate);
+    case "week":
+      return enumerateWeeks(fromDate, toDate);
+    case "month":
+      return enumerateMonths(fromDate, toDate);
+    case "year":
+      return enumerateYears(fromDate, toDate);
+  }
+}
+
+/** Which bucket an instant falls in, keyed to match {@link enumerateBuckets}. */
+function bucketKey(granularity: TrendGranularity, ms: number): string {
+  switch (granularity) {
+    case "hour":
+      return `${utcDateKey(ms)}H${pad2(new Date(ms).getUTCHours())}`;
+    case "day":
+      return utcDateKey(ms);
+    case "week":
+      return mondayKey(ms);
+    case "month":
+      return utcMonthKey(ms);
+    case "year":
+      return String(new Date(ms).getUTCFullYear());
+  }
+}
+
+/** 24 hourly buckets for a single UTC day. */
+function enumerateHours(dateKey: string): Bucket[] {
+  const buckets: Bucket[] = [];
+  for (let h = 0; h < 24; h++) {
+    buckets.push({
+      key: `${dateKey}H${pad2(h)}`,
+      label: hourLabel(h),
+      startIso: `${dateKey}T${pad2(h)}:00:00.000Z`,
     });
   }
-  return points;
+  return buckets;
+}
+
+/** One bucket per UTC day, inclusive of both ends. */
+function enumerateDays(fromDate: string, toDate: string): Bucket[] {
+  const buckets: Bucket[] = [];
+  const endMs = dayStartMs(toDate);
+  for (let ms = dayStartMs(fromDate); ms <= endMs; ms += MS_PER_DAY) {
+    const key = utcDateKey(ms);
+    buckets.push({ key, label: dayMonthLabel(ms), startIso: key });
+  }
+  return buckets;
+}
+
+/** One bucket per Monday-started week covering the span. */
+function enumerateWeeks(fromDate: string, toDate: string): Bucket[] {
+  const buckets: Bucket[] = [];
+  const endMs = dayStartMs(toDate);
+  for (let ms = mondayStartMs(dayStartMs(fromDate)); ms <= endMs; ms += 7 * MS_PER_DAY) {
+    const key = utcDateKey(ms);
+    buckets.push({ key, label: dayMonthLabel(ms), startIso: key });
+  }
+  return buckets;
+}
+
+/** One bucket per calendar month covering the span (year suffix when multi-year). */
+function enumerateMonths(fromDate: string, toDate: string): Bucket[] {
+  const [fy, fm] = fromDate.split("-").map(Number);
+  const [ty, tm] = toDate.split("-").map(Number);
+  const multiYear = fy !== ty;
+  const buckets: Bucket[] = [];
+  for (let idx = fy * 12 + (fm - 1); idx <= ty * 12 + (tm - 1); idx++) {
+    const year = Math.floor(idx / 12);
+    const month = (idx % 12) + 1; // 1–12
+    const key = `${year}-${pad2(month)}`;
+    const label = multiYear ? `${MONTH_LABELS[month - 1]} '${String(year).slice(2)}` : MONTH_LABELS[month - 1];
+    buckets.push({ key, label, startIso: `${key}-01` });
+  }
+  return buckets;
+}
+
+/** One bucket per calendar year covering the span. */
+function enumerateYears(fromDate: string, toDate: string): Bucket[] {
+  const fromYear = Number(fromDate.slice(0, 4));
+  const toYear = Number(toDate.slice(0, 4));
+  const buckets: Bucket[] = [];
+  for (let year = fromYear; year <= toYear; year++) {
+    buckets.push({ key: String(year), label: String(year), startIso: `${year}-01-01` });
+  }
+  return buckets;
 }
 
 // ---------------------------------------------------------------------------
@@ -620,10 +888,47 @@ function mondayKey(ms: number): string {
   return utcDateKey(mondayStartMs(ms));
 }
 
-/** Short "6 Jun"-style label for a week-start instant. */
+/** Short "6 Jun"-style label for a day/week-start instant. */
 function dayMonthLabel(ms: number): string {
   const d = new Date(ms);
   return `${d.getUTCDate()} ${MONTH_LABELS[d.getUTCMonth()]}`;
+}
+
+/** Short 12-hour clock label for an hour bucket, e.g. `"2 PM"`. */
+function hourLabel(hour: number): string {
+  const period = hour < 12 ? "AM" : "PM";
+  const h12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${h12} ${period}`;
+}
+
+/** The first day of `dateKey`'s month, as a UTC `YYYY-MM-DD` string. */
+function monthStartKey(dateKey: string): string {
+  const [y, m] = dateKey.split("-").map(Number);
+  return `${y}-${pad2(m)}-01`;
+}
+
+/** Jan 1 of `dateKey`'s year, as a UTC `YYYY-MM-DD` string. */
+function yearStartKey(dateKey: string): string {
+  const [y] = dateKey.split("-").map(Number);
+  return `${y}-01-01`;
+}
+
+/** `dateKey` shifted by `days` (may be negative), as a UTC `YYYY-MM-DD` string. */
+function addDaysUtc(dateKey: string, days: number): string {
+  return utcDateKey(dayStartMs(dateKey) + days * MS_PER_DAY);
+}
+
+/** Inclusive day count of `[fromDate, toDate]` (≥ 1 for fromDate ≤ toDate). */
+function daySpan(fromDate: string, toDate: string): number {
+  return Math.round((dayStartMs(toDate) - dayStartMs(fromDate)) / MS_PER_DAY) + 1;
+}
+
+/** Whether a value is a real `YYYY-MM-DD` calendar date (round-trips through UTC). */
+function isDateKey(value: string | null | undefined): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [y, m, d] = value.split("-").map(Number);
+  const ms = Date.UTC(y, m - 1, d);
+  return Number.isFinite(ms) && utcDateKey(ms) === value;
 }
 
 /** Zero-pad an integer to two digits. */
