@@ -2869,6 +2869,12 @@ table.tbl tr:last-child td {
   box-shadow: var(--sh-md);
   padding: 14px;
 }
+/* Anchor to the trigger's right edge instead — set by the DatePicker when a
+   left-aligned popover would spill past the viewport (e.g. the "To" field). */
+.cal-pop.flip-right {
+  left: auto;
+  right: 0;
+}
 .cal {
   width: 252px;
   user-select: none;

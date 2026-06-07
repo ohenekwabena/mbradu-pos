@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Calendar } from "@/components/calendar";
 import { Icon } from "@/components/icon";
+
+/** Run the layout pass on the client (so the popover is placed before paint —
+ *  no flash) but fall back to useEffect on the server, where useLayoutEffect
+ *  is a no-op React warns about. */
+const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 const MONTHS_SHORT = [
   "Jan",
@@ -58,8 +63,10 @@ export function DatePicker({
   "aria-label"?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [flipRight, setFlipRight] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -68,6 +75,28 @@ export function DatePicker({
     }
     document.addEventListener("click", onDoc);
     return () => document.removeEventListener("click", onDoc);
+  }, [open]);
+
+  // Keep the popover on-screen: it normally hangs from the trigger's left edge,
+  // but flip it to the right edge when that would spill past the viewport — as
+  // happens for the "To" field of a date range on a narrow screen. Re-checked
+  // on resize so rotating the device re-aligns.
+  useIsomorphicLayoutEffect(() => {
+    if (!open) return;
+    function place() {
+      const pop = popRef.current;
+      const trigger = triggerRef.current;
+      if (!pop || !trigger) return;
+      const margin = 8;
+      const rect = trigger.getBoundingClientRect();
+      const popWidth = pop.offsetWidth;
+      const overflowsRight = rect.left + popWidth > window.innerWidth - margin;
+      const rightAlignFits = rect.right - popWidth >= margin;
+      setFlipRight(overflowsRight && rightAlignFits);
+    }
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
   }, [open]);
 
   return (
@@ -105,7 +134,7 @@ export function DatePicker({
       </button>
 
       {open && (
-        <div className="cal-pop" role="dialog">
+        <div ref={popRef} className={`cal-pop${flipRight ? " flip-right" : ""}`} role="dialog">
           <Calendar
             value={value || undefined}
             min={min}
