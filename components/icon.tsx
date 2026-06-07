@@ -19,6 +19,8 @@ const PATHS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   chevdown: '<path d="m6 9 6 6 6-6"/>',
   chevright: '<path d="m9 6 6 6-6 6"/>',
+  chevleft: '<path d="m15 18-6-6 6-6"/>',
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
