@@ -652,7 +652,7 @@ function RecentSalesCard({ vm, showShop }: { vm: DashboardViewModel; showShop: b
         </Link>
       </div>
       <div className="table-wrap">
-        <table className="tbl">
+        <table className="tbl recent-sales">
           <thead>
             <tr>
               <th>Time</th>

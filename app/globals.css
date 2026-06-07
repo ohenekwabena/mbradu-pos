@@ -1851,9 +1851,10 @@ table.tbl tr:last-child td {
   .nav-item .tip {
     display: none; /* tooltips are useless on touch */
   }
-  /* the account marker trails the nav list on the bottom bar */
+  /* the account marker is redundant on the bottom bar — the account menu
+     lives in the top bar on mobile */
   .sidebar > .nav-item {
-    margin-left: 4px;
+    display: none;
   }
 
   /* clearance so content never hides behind the bottom bar */
@@ -2619,9 +2620,24 @@ table.tbl tr:last-child td {
   }
 }
 
+/* Keep every recent-sales cell on a single line at any width — the table scrolls
+   horizontally inside .table-wrap instead of wrapping, mirroring the /sales
+   archive table. */
+.recent-sales td {
+  white-space: nowrap;
+}
+
 /* A Cashier's trimmed dashboard shows two KPIs, not four. */
 .kpi-row.kpi-row-2 {
   grid-template-columns: repeat(2, 1fr);
+}
+/* On phones the pair is too cramped side by side, so stack it into one column —
+   matching the Owner KPI row. Needs equal specificity to the rule above and must
+   sit after it, since the generic .kpi-row collapse (≤640px) can't outrank it. */
+@media (max-width: 640px) {
+  .kpi-row.kpi-row-2 {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Segmented control (range toggle, stock-health tabs) — reuses .pill. */
@@ -2992,6 +3008,12 @@ table.tbl tr:last-child td {
 /* A completed-sales row is clickable — it opens the receipt. */
 .sale-row {
   cursor: pointer;
+}
+
+/* Keep every sales cell on a single line at any width — the table scrolls
+   horizontally inside .table-wrap instead of wrapping, even on phones. */
+.sale-row td {
+  white-space: nowrap;
 }
 
 /* "Load more" sits centred below the list. */
