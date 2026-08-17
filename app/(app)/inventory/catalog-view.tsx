@@ -302,6 +302,9 @@ export function CatalogView({
               </button>
             </div>
             <div style={{ flex: 1 }} />
+            <Link href="/inventory/stock-take" className="btn btn-secondary">
+              <Icon name="list" /> Stock take
+            </Link>
             <AddMenu onAdd={openAdd} />
           </div>
 
