@@ -74,17 +74,41 @@ _Avoid_: Sale item, entry
 One amount paid toward a Sale by one method (Cash, Mobile Money, Card, or Bank transfer). A Sale may hold several Payments that sum to its total. Methods are only *recorded* — no money moves through the app.
 _Avoid_: Tender, transaction
 
+**Float**:
+The fixed amount of cash that stays in every Shop's drawer overnight to make change — a single **business-wide** amount (like the low-stock threshold), not per-Shop. Expected drawer cash at close = Float + that day's cash **Payments**; consequently, cash leaves the drawer only at **Day close**, never mid-day.
+_Avoid_: Opening balance, change fund
+
+**Day close**:
+The end-of-selling-day ritual at one Shop: the Cashier (or the Owner in Shop context) counts the physical drawer cash and *declares* it — blind, with no expected figure shown. One Day close per Shop per selling day, covering **cash only** (Mobile Money / Card / Bank reconcile against provider statements outside the app). An unclosed selling day is flagged to the Owner; a missed day can still be closed until the Shop's next Sale rings, after which a declaration is accepted but marked stale. A missing Day close never blocks selling.
+_Avoid_: Z-report, cash-up, end-of-day report
+
+**Over/short**:
+A Day close's gap: declared cash minus expected (**Float** + the day's cash **Payments**). The cash analogue of **Variance**: Owner-only, recorded with an optional note (no classification), evidence rather than workflow — nothing posts and nothing blocks.
+_Avoid_: Cash variance, discrepancy
+
 ### Inventory
 
 **Stock movement**:
-A logged change to one **Shop stock** — i.e. an Item's stock *at a specific Shop* — with amount, who, and when. Every movement names its Shop and has a reason: **Sale** (out), **Restock** (in), or **Correction** (a manual fix, either direction).
+A logged change to one **Shop stock** — i.e. an Item's stock *at a specific Shop* — with amount, who, and when. Every movement names its Shop and has a reason: **Sale** (out), **Restock** (in), **Correction** (a manual fix, either direction), or **Stock take** (an approved **Variance**, either direction).
 _Avoid_: Adjustment (use **Correction**), transaction
 
 **Restock**:
 An Owner-only Stock movement that adds units to a Shop's stock when new supply arrives. The **first** Restock of an Item at a Shop is what makes that Shop begin **carrying** the Item.
 
 **Correction**:
-An Owner-only Stock movement that fixes a miscount (damage, shrinkage, error) for a Shop's stock, up or down.
+An Owner-only Stock movement that fixes a *known* miscount (damage, data-entry error) for a Shop's stock, up or down. A gap discovered by counting is not a Correction — it is a **Stock take**'s **Variance**.
+
+**Stock take**:
+A *blind* physical count of one Shop's stock, covering a chosen set of carried Items (default: everything the Shop carries). Performed by that Shop's Cashier or by the Owner (in Shop context); every line must be counted or explicitly skipped before submission. The counter never sees expected quantities during entry, and submission changes nothing — only Owner approval does. Selling may continue during a Stock take, but a counted line invalidated by a mid-count Sale is flagged stale and must be recounted rather than trusted.
+_Avoid_: Audit, inventory check, cycle count (all mean **Stock take**); Count (a Stock take *contains* counted lines)
+
+**Variance**:
+One counted Item's gap: counted quantity minus the expected quantity (the ledger quantity snapshotted when that line was entered). Owner-only — a Cashier submits counts but never sees variances. At approval the Owner classifies each non-zero Variance — **damaged**, **expired**, **other (explained)**, or **unexplained** — and approval posts it to the ledger as a **Stock take** movement, bringing system stock back to counted reality.
+_Avoid_: Discrepancy, difference, adjustment
+
+**Shrinkage**:
+The theft signal: **unexplained** loss — negative unexplained **Variance** — valued at cost. Owner-only, like every cost-derived figure. Explained losses (damaged, expired) are deliberately excluded so known accidents don't pollute the number.
+_Avoid_: Loss (ambiguous), wastage, theft (an interpretation, not the measure)
 
 ## Relationships
 
@@ -105,14 +129,19 @@ An Owner-only Stock movement that fixes a miscount (damage, shrinkage, error) fo
 - A **Sale** is immutable once completed, including its **Shop**
 - A **Shop stock**'s current quantity equals the sum of its **Stock movements** (which are scoped to that *(Item, Shop)*)
 - Completing a **Sale** writes one Sale **Stock movement** per Line item against the selling **Shop**; only the **Owner** can write **Restock** or **Correction** movements, for any Shop
+- A **Stock take** belongs to exactly one **Shop**, records who counted, and holds one line per counted **Item** (expected snapshot, counted quantity)
+- Only the **Owner** approves a **Stock take**; approval posts one **Stock take** movement per non-zero **Variance** — a Cashier's count never changes stock directly
+- A **Day close** belongs to exactly one **Shop** and one calendar day, and records who declared it; its **Over/short** is computed server-side, never entered
 
 ## Business rules
 
 - **Currency**: Ghana Cedi (GH₵), single-currency, business-wide. Prices are final — no separate VAT/tax line.
 - **Low stock**: a single **business-wide** threshold flags any **Shop stock** at or below it; there is no per-Shop or per-Item reorder level. The expiry-warning window is likewise business-wide.
 - **Shop scoping**: a **Cashier** sees and acts on **only their own Shop** — its carried Items, stock, and Sales. The **Owner** sees every Shop, defaults to an all-Shops dashboard rollup (with per-Shop drill and a revenue-by-Shop comparison), and narrows to one Shop via the **Shop context**. This scoping is enforced server-side (row-level), not merely hidden in the UI.
-- **Visibility**: cost, margin/profit, and inventory value are **Owner-only**. A **Cashier**'s dashboard is trimmed to their Shop's today-sales and stock health (low / out / expiring), with no money-at-cost figures.
-- **v1 non-goals** (deliberately deferred): returns/refunds, discounts, barcodes, item photos, customer records, offline use, tax; **per-Shop pricing/cost** (price and cost are business-wide); **a per-Shop manager role** (only Owner and Cashier exist); **closing/deactivating a Shop** (Shops can be opened, not retired, in v1). These are noted so they aren't "fixed" by accident — their absence is intentional.
+- **Visibility**: cost, margin/profit, inventory value, **Stock-take Variances / Shrinkage**, and **Day-close Over/shorts** are **Owner-only**.
+- **Reconciliation**: theft control is two *blind* reconciliations — **Stock takes** (physical shelf vs the ledger) and **Day closes** (physical drawer vs recorded cash Payments + Float). In both, the declarer never sees the expected figure, the gap is Owner-only, and detection — not prevention — is the honest promise. A **Cashier**'s dashboard is trimmed to their Shop's today-sales and stock health (low / out / expiring), with no money-at-cost figures.
+- **Shrinkage attribution**: **Shrinkage** is attributed to a **Shop** and the window between two **Stock takes** — never to a person. Narrowing the window (counting more often, spot-counting hot Items) is the lever; the system does not track who was on duty.
+- **v1 non-goals** (deliberately deferred): returns/refunds, discounts, barcodes, item photos, customer records, offline use, tax; **shift tracking / per-Cashier shrinkage attribution** (Shrinkage is per Shop per between-counts window); **per-Shop pricing/cost** (price and cost are business-wide); **a per-Shop manager role** (only Owner and Cashier exist); **closing/deactivating a Shop** (Shops can be opened, not retired, in v1). These are noted so they aren't "fixed" by accident — their absence is intentional.
 
 > **Scope change (this revision):** v1 was originally single-shop, and "multiple branches" was an explicit non-goal. That has been **reversed** — the system is now multi-Shop. See the new ADR on Shop-scoped multi-tenancy.
 
