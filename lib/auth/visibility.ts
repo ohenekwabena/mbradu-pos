@@ -48,6 +48,7 @@ export type Action =
   | "stock:read"
   | "stock:restock"
   | "stock:correct"
+  | "stocktake:count" // start / count / submit a blind Stock take (both roles, own Shop — MP-35)
   // Sales — read and sell are Shop-scoped (Owner spans all Shops).
   | "sale:read"
   | "sale:create"
@@ -92,6 +93,7 @@ const POLICY: Record<Action, Rule> = {
   "stock:read": { ownerOnly: false, shopScoped: true },
   "stock:restock": { ownerOnly: true, shopScoped: true },
   "stock:correct": { ownerOnly: true, shopScoped: true },
+  "stocktake:count": { ownerOnly: false, shopScoped: true },
 
   "sale:read": { ownerOnly: false, shopScoped: true },
   "sale:create": { ownerOnly: false, shopScoped: true },

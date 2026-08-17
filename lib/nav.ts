@@ -25,6 +25,9 @@ export const CASHIER_NAV: NavItem[] = [
   { key: "dashboard", label: "Dashboard", href: "/dashboard", icon: "dashboard" },
   { key: "sell", label: "Sell", href: "/sell", icon: "sell" },
   { key: "sales", label: "Sales", href: "/sales", icon: "sales" },
+  // A Cashier's one inventory surface: the blind Stock take (MP-35). The
+  // inventory *list* stays Owner-only; this deep-links straight to the count.
+  { key: "inventory", label: "Stock take", href: "/inventory/stock-take", icon: "list" },
 ];
 
 export function navFor(role: Role): NavItem[] {

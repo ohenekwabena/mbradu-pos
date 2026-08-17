@@ -3018,3 +3018,84 @@ table.tbl tr:last-child td {
   justify-content: center;
   margin-top: 18px;
 }
+
+/* =====================================================================
+   Stock take (MP-35) — the blind count sheet and its scope picker.
+   ===================================================================== */
+
+/* Scope picker: a scrollable checkbox list of the shop's carried items. */
+.stp-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+.stp-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--line);
+}
+.stp-row:last-child {
+  border-bottom: none;
+}
+.stp-row:hover {
+  background: var(--bg);
+}
+.stp-row input[type="checkbox"] {
+  accent-color: var(--primary);
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* Count-sheet header: session facts left, progress figures right. */
+.st-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.st-progress-figures {
+  font-size: 14px;
+  color: var(--muted);
+}
+.st-progress {
+  margin-top: 12px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.st-progress span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--primary);
+  transition: width 0.2s;
+}
+
+/* Per-row entry: unit input + Save / Skip, right-aligned in the Count cell. */
+.st-count-form {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.st-count-form .input {
+  width: 88px;
+  text-align: right;
+}
+
+/* Footer: Cancel on the left, the submit gate + button on the right. */
+.st-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
