@@ -16,8 +16,8 @@ import {
 } from "./stock";
 
 describe("STOCK_REASONS", () => {
-  it("mirrors the stock_movements.reason CHECK (sale / restock / correction)", () => {
-    expect(STOCK_REASONS).toEqual(["sale", "restock", "correction"]);
+  it("mirrors the stock_movements.reason CHECK (sale / restock / correction / stock_take)", () => {
+    expect(STOCK_REASONS).toEqual(["sale", "restock", "correction", "stock_take"]);
   });
 });
 
@@ -31,6 +31,19 @@ describe("sumMovements / quantityFromMovements", () => {
     ];
     expect(sumMovements(ledger)).toBe(10);
     expect(quantityFromMovements(ledger)).toBe(10);
+  });
+
+  it("sums a stock_take movement like any other — signed, no special casing (ADR-0006)", () => {
+    // An approved Stock-take Variance posts either way: negative for a
+    // shortfall (counted < expected), positive for a surplus.
+    const ledger: Movement[] = [
+      { reason: "restock", amount: 10 },
+      { reason: "sale", amount: -3 },
+      { reason: "stock_take", amount: -2 },
+      { reason: "stock_take", amount: 1 },
+    ];
+    expect(sumMovements(ledger)).toBe(6);
+    expect(quantityFromMovements(ledger)).toBe(6);
   });
 
   it("is 0 for an empty ledger (a carried Shop stock with no net movement)", () => {

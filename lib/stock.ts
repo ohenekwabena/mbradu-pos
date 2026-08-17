@@ -20,17 +20,19 @@
 
 /**
  * Why a Stock movement happened — mirrors the `stock_movements.reason` CHECK and
- * CONTEXT.md: a **Sale** (out), a **Restock** (in), or a **Correction** (a
- * manual fix, either direction).
+ * CONTEXT.md: a **Sale** (out), a **Restock** (in), a **Correction** (a manual
+ * fix for a *known* miscount, either direction), or a **Stock take** (an
+ * Owner-approved Variance posted by the approval flow, either direction —
+ * ADR-0006, amending ADR-0004).
  */
-export const STOCK_REASONS = ["sale", "restock", "correction"] as const;
+export const STOCK_REASONS = ["sale", "restock", "correction", "stock_take"] as const;
 export type StockReason = (typeof STOCK_REASONS)[number];
 
 /**
  * A ledger entry's effect on quantity: a signed `amount` and its `reason`. The
  * database row carries more (ids, actor, note, timestamp), but a *(Item, Shop)*'s
  * quantity is a function of the amounts alone. Sign follows reason — restock
- * `> 0`, sale `< 0`, correction either way but never `0`.
+ * `> 0`, sale `< 0`, correction and stock_take either way but never `0`.
  */
 export interface Movement {
   reason: StockReason;

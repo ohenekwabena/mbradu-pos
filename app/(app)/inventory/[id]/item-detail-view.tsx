@@ -39,7 +39,7 @@ export interface LedgerEntry {
   shopId: string;
   shopName: string;
   reason: StockReason;
-  /** Signed: restock `> 0`, sale `< 0`, correction either way. */
+  /** Signed: restock `> 0`, sale `< 0`, correction / stock take either way. */
   amount: number;
   /** Free-text note / reason, or `null`. */
   note: string | null;
@@ -60,6 +60,7 @@ const REASON_META: Record<StockReason, { label: string; chip: string }> = {
   sale: { label: "Sale", chip: "chip-success" },
   restock: { label: "Restock", chip: "chip-neutral" },
   correction: { label: "Correction", chip: "chip-warning" },
+  stock_take: { label: "Stock take", chip: "chip-accent" },
 };
 
 /** Per-Shop stock-health chip on the stock-by-shop cards (MP-21). */
