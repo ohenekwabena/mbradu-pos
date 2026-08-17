@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import { DatePicker } from "@/components/date-picker";
 import { Icon } from "@/components/icon";
 import { format } from "@/lib/money";
 import { PAYMENT_METHODS, type PaymentMethod } from "@/lib/sale";
@@ -123,22 +124,18 @@ export function SalesView({
 
         {dateWindow.range === "custom" && (
           <div className="date-range">
-            <input
-              type="date"
-              className="input"
-              aria-label="From date"
+            <DatePicker
               value={fromDraft}
+              onChange={setFromDraft}
               max={toDraft || undefined}
-              onChange={(e) => setFromDraft(e.target.value)}
+              aria-label="From date"
             />
             <span className="sep">–</span>
-            <input
-              type="date"
-              className="input"
-              aria-label="To date"
+            <DatePicker
               value={toDraft}
+              onChange={setToDraft}
               min={fromDraft || undefined}
-              onChange={(e) => setToDraft(e.target.value)}
+              aria-label="To date"
             />
             <button
               type="button"
