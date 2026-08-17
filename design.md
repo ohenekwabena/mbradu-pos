@@ -62,11 +62,16 @@
 
 ### 2.1 Logo & mark
 
-The reference's purple speech-bubble is a placeholder; Mbradu needs its own mark.
+The mark is Mbradu's real brand badge: a circular emblem (woman silhouette + interlocked
+MW monogram inside a pink laurel wreath, with `MBRADU · WIGS AND HAIR SHOP` lettering),
+cleaned from the brand photo into `public/brand/logo.png` (transparent outside the circle).
+A flat vector version lives at `public/brand/logo.svg` (5-tone posterization of the foil
+artwork, transparent background, counters/face as true cutouts) — this is the in-app
+asset; the PNG remains for raster contexts (app icons, favicons, email).
 
-- **App mark:** an **"M" monogram** in a purple (`#673AB7`) rounded square (radius 12px),
-  white glyph, Poppins Semi-Bold. This mirrors the reference's purple rounded-square
-  active-nav treatment, so the mark and the active state feel like one family.
+- **App mark:** the circular badge in a white circle tile (`.brand-mark` / `.auth-mark`),
+  rendered via `components/brand-logo.tsx` (uses the SVG). Favicon + app icons (`app/favicon.ico`,
+  `app/icon.png`, `app/apple-icon.png`) are the same badge on white.
 - **Wordmark:** `Mbradu` in Poppins Semi-Bold ink (`#212121`), optionally with
   `Wigs & Cosmetics` in Poppins Regular muted (`#616161`) beneath at a smaller size.
 - **Sidebar:** show the mark only (icon rail). **Login / receipts:** mark + wordmark.

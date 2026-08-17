@@ -1,3 +1,5 @@
+import { BrandLogo } from "@/components/brand-logo";
+
 import { ForgotPasswordForm } from "./forgot-form";
 
 export default function ForgotPasswordPage() {
@@ -5,7 +7,9 @@ export default function ForgotPasswordPage() {
     <main className="auth-screen">
       <div className="auth">
         <div className="auth-head">
-          <div className="auth-mark">M</div>
+          <div className="auth-mark">
+            <BrandLogo size={64} />
+          </div>
           <div className="auth-wordmark">Mbradu</div>
           <div className="auth-sub">Wigs &amp; Cosmetics · POS</div>
         </div>

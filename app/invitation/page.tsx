@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { BrandLogo } from "@/components/brand-logo";
 import { Icon } from "@/components/icon";
 import { createClient } from "@/lib/supabase/server";
 
@@ -26,7 +27,9 @@ export default async function InvitationPage({
     <main className="auth-screen">
       <div className="auth">
         <div className="auth-head">
-          <div className="auth-mark">M</div>
+          <div className="auth-mark">
+            <BrandLogo size={64} />
+          </div>
           <div className="auth-wordmark">Mbradu</div>
           <div className="auth-sub">
             {invite ? "You've been invited to join" : "Invitation"}

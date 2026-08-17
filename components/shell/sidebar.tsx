@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { BrandLogo } from "@/components/brand-logo";
 import { Icon } from "@/components/icon";
 import { navFor, sectionFromPath } from "@/lib/nav";
 import type { Role } from "@/lib/auth/visibility";
@@ -21,7 +22,7 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       <Link className="brand-mark" href="/dashboard" aria-label="Mbradu home">
-        M
+        <BrandLogo size={44} />
       </Link>
       <div className="nav-list">
         {nav.map((item) => (

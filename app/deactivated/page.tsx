@@ -1,3 +1,4 @@
+import { BrandLogo } from "@/components/brand-logo";
 import { Icon } from "@/components/icon";
 import { signOut } from "@/lib/actions/shell";
 
@@ -16,7 +17,9 @@ export default function DeactivatedPage() {
     <main className="auth-screen">
       <div className="auth">
         <div className="auth-head">
-          <div className="auth-mark">M</div>
+          <div className="auth-mark">
+            <BrandLogo size={64} />
+          </div>
           <div className="auth-wordmark">Mbradu</div>
           <div className="auth-sub">Wigs &amp; Cosmetics · POS</div>
         </div>

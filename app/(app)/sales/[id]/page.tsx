@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { BrandLogo } from "@/components/brand-logo";
 import { getCurrentProfile } from "@/lib/dal";
 import { format } from "@/lib/money";
 import { createClient } from "@/lib/supabase/server";
@@ -90,7 +91,9 @@ export default async function ReceiptPage({
 
       <div className="receipt print-root">
         <div className="r-head">
-          <div className="r-mark">M</div>
+          <div className="r-mark">
+            <BrandLogo size={56} />
+          </div>
           <div className="h3">Mbradu</div>
           <div className="r-shop">
             <strong style={{ color: "var(--ink)", fontWeight: 600 }}>{(shop?.name as string) ?? "Shop"}</strong>
