@@ -53,11 +53,13 @@
  * all-Shops rollup; MP-25 adds per-Shop drill-down & the revenue-by-Shop
  * comparison; MP-26 the Cashier variant and its hard redaction test. The Owner
  * date-range report generalises the today-only figures to any span. MP-39 adds
- * the Shrinkage KPI to the owner block.
+ * the Shrinkage KPI to the owner block; MP-41 the unclosed-day flags (Day
+ * closes, ADR-0007).
  */
 
 import { can, type Actor } from "@/lib/auth/visibility";
 import { type Category } from "@/lib/catalog";
+import { buildUnclosedFlags, type ShopUnclosedFlag } from "@/lib/day-close";
 import { multiply, sum, ZERO, type Pesewas } from "@/lib/money";
 import { PAYMENT_METHODS, type PaymentMethod } from "@/lib/sale";
 import { shapeSaleRow } from "@/lib/sales-list";
@@ -342,6 +344,14 @@ export interface DashboardInput {
    * only for the Owner — omitted (or empty) for a Cashier, whose payload never
    * carries an owner block anyway. */
   stockTakeMovements?: DashboardStockTakeMovement[];
+  /** Day-close audit rows for the unclosed-day flags (MP-41, ADR-0007), over
+   * the fixed lookback — independent of the window, like the recent feed.
+   * Loaded only for the Owner; omitted for a Cashier (owner block never
+   * built). `saleTimes` marks the selling days, `closedDays` the closes. */
+  dayCloseAudit?: {
+    saleTimes: { shopId: string; createdAt: string }[];
+    closedDays: { shopId: string; closeDate: string }[];
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +443,10 @@ export interface DashboardOwnerFigures {
   /** The period's Shrinkage per Shop, high→low — the all-Shops rollup only;
    * empty under a single-Shop scope (mirrors {@link DashboardViewModel.shopComparison}). */
   shrinkageByShop: ShopShrinkageEntry[];
+  /** Unclosed-selling-day flags (MP-41, ADR-0007): Shops with an ended selling
+   * day in the lookback that never got a Day close, worst first — the
+   * stopped-closing pattern. Empty when every selling day was closed. */
+  unclosedFlags: ShopUnclosedFlag[];
 }
 
 /** The resolved scope, carrying the Shop name / count for the header. */
@@ -598,12 +612,23 @@ export function buildDashboard(input: DashboardInput): DashboardViewModel {
     recentSales,
   };
 
-  // Owner-only, cost-derived figures — built only when the actor may view cost,
-  // so they are absent (not nulled) from a Cashier's payload (Visibility-policy).
+  // Owner-only figures — built only when the actor may view cost, so they are
+  // absent (not nulled) from a Cashier's payload (Visibility-policy). The
+  // unclosed-day flags carry no money but are theft signals in the same
+  // Owner-only family (ADR-0007), so they live inside the same gate.
   if (can(actor, "cost:view")) {
     viewModel.owner = {
       ...buildOwnerFigures(windowSales, stock, itemsById, windowRevenue),
       ...buildShrinkage(takeMovements, itemsById, input.shops, scope, startMs, endMs),
+      unclosedFlags: buildUnclosedFlags({
+        shops:
+          scope.mode === "shop"
+            ? input.shops.filter((shop) => shop.id === scope.shopId)
+            : input.shops,
+        saleTimes: inScope(input.dayCloseAudit?.saleTimes ?? []),
+        closedDays: inScope(input.dayCloseAudit?.closedDays ?? []),
+        today,
+      }),
     };
   }
 
@@ -742,7 +767,7 @@ function buildOwnerFigures(
   stock: readonly DashboardStock[],
   itemsById: ReadonlyMap<string, DashboardItem>,
   windowRevenue: Pesewas,
-): Omit<DashboardOwnerFigures, "shrinkagePesewas" | "shrinkageByShop"> {
+): Omit<DashboardOwnerFigures, "shrinkagePesewas" | "shrinkageByShop" | "unclosedFlags"> {
   const cogsParts: Pesewas[] = [];
   for (const sale of windowSales) {
     for (const line of sale.lines) {

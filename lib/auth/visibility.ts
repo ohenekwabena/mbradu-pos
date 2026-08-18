@@ -190,6 +190,14 @@ export function assertCan(actor: Actor, action: Action, shop?: string): void {
  * {@link redactForActor} is a true mirror of the view-model's structural
  * gating rather than a subset of it: a cost-derived field can never reach a
  * Cashier through either path.
+ *
+ * The Day-close theft signals (MP-41, ADR-0007) sit in the same family: the
+ * stored **Over/short**, the server-computed **expected drawer cash** it is
+ * judged against (the declaration is blind — an expected figure reaching the
+ * declarer would defeat it), and the **unclosed-day flags** (the
+ * stopped-closing pattern, redacted as whole containers like
+ * `shrinkagebyshop`). The *declared* amount is not listed: the declarer typed
+ * it themselves.
  */
 const REDACTED_KEYS: ReadonlySet<string> = new Set([
   "cost",
@@ -210,6 +218,15 @@ const REDACTED_KEYS: ReadonlySet<string> = new Set([
   "shrinkagebyshop",
   "unexplainedloss",
   "unexplainedlosspesewas",
+  "overshort",
+  "overshortpesewas",
+  "expectedpesewas",
+  "expecteddrawer",
+  "expecteddrawerpesewas",
+  "expectedcash",
+  "expectedcashpesewas",
+  "unclosedflags",
+  "uncloseddays",
 ]);
 
 function normalizeKey(key: string): string {

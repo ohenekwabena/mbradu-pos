@@ -9,6 +9,7 @@ import {
   type DashboardStockTakeMovement,
 } from "@/lib/dashboard";
 import { getCurrentProfile } from "@/lib/dal";
+import { unclosedLookbackStart } from "@/lib/day-close";
 import { type PaymentMethod } from "@/lib/sale";
 import { type VarianceReason } from "@/lib/stock-take";
 import { ALL_SHOPS } from "@/lib/shop-context";
@@ -56,7 +57,8 @@ type TakeMovementRow = {
  * range-independent newest-first feed for the recent-sales card; every per-Shop
  * stock row with its Item's cost/category/expiry; the Shops; the business-wide
  * settings; and — for the Owner only — the window's `stock_take` movements with
- * their classification, the Shrinkage source (MP-39). It hands them to the pure
+ * their classification, the Shrinkage source (MP-39), plus the lookback's Sale
+ * instants and Day closes, the unclosed-day flag source (MP-41). It hands them to the pure
  * {@link buildDashboard} view-model — which
  * rolls them up for the scope, window, and role and applies the Visibility-policy
  * (cost/profit/value are Owner-only). The Owner defaults to the all-Shops rollup
@@ -134,18 +136,43 @@ export default async function DashboardPage({
     movementQuery = query;
   }
 
-  const [aggregateRes, feedRes, itemRes, stockRes, settingsRes, movementRes] = await Promise.all([
-    aggregateQuery,
-    feedQuery,
-    supabase.from("items_catalog").select("id, name, category, cost_pesewas, attributes, archived_at"),
-    supabase.from("shop_stock").select("item_id, shop_id, quantity"),
-    supabase
-      .from("shop_settings")
-      .select("low_stock_threshold, expiry_warning_days")
-      .eq("id", true)
-      .maybeSingle(),
-    movementQuery ?? Promise.resolve({ data: null }),
-  ]);
+  // The unclosed-day flag sources (MP-41, ADR-0007): the lookback's Sale
+  // instants (they mark the selling days) and its recorded closes, per Shop.
+  // Owner-only — the flags live in the owner block, and `day_closes` is
+  // Owner-only under RLS anyway. Independent of the selected window.
+  let auditSalesQuery = null;
+  let auditClosesQuery = null;
+  if (profile.role === "owner") {
+    const lookbackStart = unclosedLookbackStart(today);
+    let salesQ = supabase
+      .from("sales")
+      .select("shop_id, created_at")
+      .gte("created_at", `${lookbackStart}T00:00:00.000Z`);
+    if (scopeShopId) salesQ = salesQ.eq("shop_id", scopeShopId);
+    auditSalesQuery = salesQ;
+    let closesQ = supabase
+      .from("day_closes")
+      .select("shop_id, close_date")
+      .gte("close_date", lookbackStart);
+    if (scopeShopId) closesQ = closesQ.eq("shop_id", scopeShopId);
+    auditClosesQuery = closesQ;
+  }
+
+  const [aggregateRes, feedRes, itemRes, stockRes, settingsRes, movementRes, auditSalesRes, auditClosesRes] =
+    await Promise.all([
+      aggregateQuery,
+      feedQuery,
+      supabase.from("items_catalog").select("id, name, category, cost_pesewas, attributes, archived_at"),
+      supabase.from("shop_stock").select("item_id, shop_id, quantity"),
+      supabase
+        .from("shop_settings")
+        .select("low_stock_threshold, expiry_warning_days")
+        .eq("id", true)
+        .maybeSingle(),
+      movementQuery ?? Promise.resolve({ data: null }),
+      auditSalesQuery ?? Promise.resolve({ data: null }),
+      auditClosesQuery ?? Promise.resolve({ data: null }),
+    ]);
 
   const aggregateRows = (aggregateRes.data ?? []) as unknown as SaleRow[];
   const feedRows = (feedRes.data ?? []) as unknown as SaleRow[];
@@ -231,6 +258,18 @@ export default async function DashboardPage({
 
   const actor: Actor = { role: profile.role, shopId: profile.shopId };
 
+  const dayCloseAudit =
+    profile.role === "owner"
+      ? {
+          saleTimes: ((auditSalesRes.data ?? []) as { shop_id: string; created_at: string }[]).map(
+            (row) => ({ shopId: row.shop_id, createdAt: row.created_at }),
+          ),
+          closedDays: ((auditClosesRes.data ?? []) as { shop_id: string; close_date: string }[]).map(
+            (row) => ({ shopId: row.shop_id, closeDate: row.close_date }),
+          ),
+        }
+      : undefined;
+
   const viewModel = buildDashboard({
     actor,
     scope,
@@ -243,6 +282,7 @@ export default async function DashboardPage({
     shops,
     settings,
     stockTakeMovements,
+    dayCloseAudit,
   });
 
   return (

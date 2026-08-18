@@ -145,7 +145,156 @@ export function isStaleClose(closeDate: string, saleTimes: readonly string[]): b
   });
 }
 
+// ---------------------------------------------------------------------------
+// Owner surfaces (MP-41, ADR-0007): reading the Over/short, and the
+// unclosed-day flags — a thief's cheapest move is simply to stop closing, so
+// the dashboard must make a stopped-closing pattern unmissable.
+// ---------------------------------------------------------------------------
+
+/** Which way a close's Over/short leans. */
+export type OverShortKind = "short" | "over" | "balanced";
+
+/** Classify a stored Over/short (declared − expected): negative is a shortage
+ * (the cash-skim signal), positive an overage, zero balanced. */
+export function overShortKind(overShort: Pesewas): OverShortKind {
+  if (overShort < 0) return "short";
+  if (overShort > 0) return "over";
+  return "balanced";
+}
+
+/** How many days back the unclosed-day flags look. Two weeks keeps the signal
+ * recent (an older miss has been acted on or accepted) and the query cheap. */
+export const UNCLOSED_LOOKBACK_DAYS = 14;
+
+/** The first `YYYY-MM-DD` day of the flags' lookback: `lookbackDays` before
+ * `today`. The loader bounds its Sales / `day_closes` reads with this, so the
+ * queries and {@link buildUnclosedFlags} agree on the window. */
+export function unclosedLookbackStart(
+  today: string,
+  lookbackDays: number = UNCLOSED_LOOKBACK_DAYS,
+): string {
+  return addDaysUtc(today, -lookbackDays);
+}
+
+/** What {@link buildUnclosedFlags} needs — already-loaded rows, no I/O. */
+export interface UnclosedFlagsInput {
+  shops: readonly { id: string; name: string }[];
+  /** Sale instants per Shop over the lookback (each marks a selling day). */
+  saleTimes: readonly { shopId: string; createdAt: string }[];
+  /** Days with a recorded Day close, per Shop. */
+  closedDays: readonly { shopId: string; closeDate: string }[];
+  /** Today as a UTC `YYYY-MM-DD`, stamped server-side (Ghana runs on GMT). */
+  today: string;
+  lookbackDays?: number;
+}
+
+/** One Shop's unclosed-day flag: which ended selling days were never closed,
+ * and how long the *current* run of unclosed selling days is. */
+export interface ShopUnclosedFlag {
+  shopId: string;
+  shopName: string;
+  /** Ended selling days (≥ 1 Sale, day over, inside the lookback) with no Day
+   * close, newest first. */
+  unclosedDays: string[];
+  /** Consecutive unclosed selling days counting back from the Shop's most
+   * recent ended selling day — 0 when that day was closed (the pattern broke),
+   * climbing while closes keep not happening. Calendar days with no Sales
+   * don't break the run (there was nothing to close). */
+  streak: number;
+  /** The newest unclosed day, human-named: `"Yesterday"` or `"12 Aug"`. */
+  latestLabel: string;
+}
+
+/**
+ * The unclosed-selling-day flags (MP-41): for each Shop, the ended days in the
+ * lookback that saw at least one Sale but never got a Day close. Only flagged
+ * Shops are returned (a Shop with every selling day closed is silence, not a
+ * zero row), ranked worst first — longest streak, then most unclosed days,
+ * then name. Rules:
+ *   - a day with no Sales and no close is *not* flagged — nothing to close;
+ *   - today is never flagged — the day hasn't ended, closing tonight is the
+ *     normal ritual;
+ *   - an unparseable Sale timestamp is ignored rather than trusted.
+ * Pure UTC day math throughout (`today` is injected — no clock read).
+ */
+export function buildUnclosedFlags(input: UnclosedFlagsInput): ShopUnclosedFlag[] {
+  const firstDay = unclosedLookbackStart(input.today, input.lookbackDays);
+  const lastEndedDay = addDaysUtc(input.today, -1);
+
+  // Distinct selling days per Shop inside [firstDay, lastEndedDay].
+  const sellingDays = new Map<string, Set<string>>();
+  for (const sale of input.saleTimes) {
+    const ms = Date.parse(sale.createdAt);
+    if (!Number.isFinite(ms)) continue;
+    const day = utcDateKey(ms);
+    if (day < firstDay || day > lastEndedDay) continue;
+    let days = sellingDays.get(sale.shopId);
+    if (!days) sellingDays.set(sale.shopId, (days = new Set()));
+    days.add(day);
+  }
+
+  const closedByShop = new Map<string, Set<string>>();
+  for (const close of input.closedDays) {
+    let days = closedByShop.get(close.shopId);
+    if (!days) closedByShop.set(close.shopId, (days = new Set()));
+    days.add(close.closeDate);
+  }
+
+  const flags: ShopUnclosedFlag[] = [];
+  for (const shop of input.shops) {
+    const days = [...(sellingDays.get(shop.id) ?? [])].sort().reverse(); // newest first
+    const closed = closedByShop.get(shop.id);
+    const unclosedDays = days.filter((day) => !closed?.has(day));
+    if (unclosedDays.length === 0) continue;
+
+    let streak = 0;
+    for (const day of days) {
+      if (closed?.has(day)) break;
+      streak += 1;
+    }
+
+    flags.push({
+      shopId: shop.id,
+      shopName: shop.name,
+      unclosedDays,
+      streak,
+      latestLabel: unclosedDays[0] === lastEndedDay ? "Yesterday" : dayMonthLabel(unclosedDays[0]),
+    });
+  }
+
+  return flags.sort(
+    (a, b) =>
+      b.streak - a.streak ||
+      b.unclosedDays.length - a.unclosedDays.length ||
+      a.shopName.localeCompare(b.shopName),
+  );
+}
+
 const MS_PER_DAY = 86_400_000;
+
+const MONTHS_SHORT = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
+/** UTC `YYYY-MM-DD` for an epoch-ms instant (mirrors the dashboard's). */
+function utcDateKey(ms: number): string {
+  const d = new Date(ms);
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
+/** `dateKey` shifted by `days` (may be negative), pure UTC math. */
+function addDaysUtc(dateKey: string, days: number): string {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  return utcDateKey(Date.UTC(y, m - 1, d) + days * MS_PER_DAY);
+}
+
+/** Short "12 Aug"-style label for a `YYYY-MM-DD` day. */
+function dayMonthLabel(dateKey: string): string {
+  const [, m, d] = dateKey.split("-").map(Number);
+  return `${d} ${MONTHS_SHORT[m - 1]}`;
+}
 
 /** Whether a value is a real `YYYY-MM-DD` calendar date (round-trips through
  * UTC — rejects "2026-13-40"). Mirrors the dashboard's private guard. */

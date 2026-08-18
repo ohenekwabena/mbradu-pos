@@ -16,6 +16,7 @@ import {
   type TrendGranularity,
   type TrendPoint,
 } from "@/lib/dashboard";
+import { UNCLOSED_LOOKBACK_DAYS, type ShopUnclosedFlag } from "@/lib/day-close";
 import { format } from "@/lib/money";
 import type { PaymentMethod } from "@/lib/sale";
 
@@ -110,6 +111,7 @@ export function DashboardView({ vm }: { vm: DashboardViewModel }) {
         <div className="dash-grid section">
           <RevenueCard vm={vm} />
           <div className="stack gap-16">
+            <DayCloseFlagsCard vm={vm} />
             {isAllShops && <ShopComparisonCard vm={vm} />}
             <PaymentMixCard vm={vm} />
           </div>
@@ -478,6 +480,63 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
         strokeLinejoin="round"
       />
     </svg>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Day closes — the unclosed-selling-day flags (MP-41, ADR-0007).
+// ---------------------------------------------------------------------------
+
+/** One flag's story line: the newest miss, then the pattern's size. */
+function flagMeta(flag: ShopUnclosedFlag): string {
+  const count = flag.unclosedDays.length;
+  const latest = `${flag.latestLabel} not closed`;
+  return count > 1
+    ? `${latest} · ${count} unclosed days in the last ${UNCLOSED_LOOKBACK_DAYS}`
+    : latest;
+}
+
+/**
+ * The Owner's unclosed-day flags: any Shop with an ended selling day (≥ 1 Sale)
+ * in the lookback that never got a Day close — since a thief's cheapest move is
+ * simply to stop closing. The streak chip escalates when the *consecutive* run
+ * grows (a stopped-closing pattern), so it can't read as a one-off slip. All
+ * clear renders as quiet reassurance, never as an empty hole.
+ */
+function DayCloseFlagsCard({ vm }: { vm: DashboardViewModel }) {
+  const flags = vm.owner!.unclosedFlags;
+  const historyHref =
+    vm.scope.mode === "shop" ? `/day-close/history?shop=${vm.scope.shopId}` : "/day-close/history";
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2 className="h2">Day closes</h2>
+        <Link className="btn btn-ghost btn-sm" href={historyHref}>
+          View closes
+        </Link>
+      </div>
+
+      {flags.length === 0 ? (
+        <div className="health-item" style={{ borderBottom: "none" }}>
+          <div className="meta">
+            Every selling day in the last {UNCLOSED_LOOKBACK_DAYS} days was closed.
+          </div>
+        </div>
+      ) : (
+        flags.map((flag) => (
+          <div className="health-item" key={flag.shopId}>
+            <div>
+              <div className="body-med">{flag.shopName}</div>
+              <div className="meta">{flagMeta(flag)}</div>
+            </div>
+            <span className={`chip ${flag.streak >= 2 ? "chip-danger" : "chip-warning"}`}>
+              {flag.streak >= 2 ? `${flag.streak} in a row` : "Not closed"}
+            </span>
+          </div>
+        ))
+      )}
+    </div>
   );
 }
 
