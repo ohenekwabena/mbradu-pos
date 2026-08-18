@@ -16,6 +16,7 @@ export const OWNER_NAV: NavItem[] = [
   { key: "sell", label: "Sell", href: "/sell", icon: "sell" },
   { key: "inventory", label: "Inventory", href: "/inventory", icon: "inventory" },
   { key: "sales", label: "Sales", href: "/sales", icon: "sales" },
+  { key: "day-close", label: "Day close", href: "/day-close", icon: "cash" },
   { key: "shops", label: "Shops", href: "/shops", icon: "shops" },
   { key: "staff", label: "Staff", href: "/staff", icon: "staff" },
   { key: "settings", label: "Settings", href: "/settings", icon: "settings" },
@@ -28,6 +29,8 @@ export const CASHIER_NAV: NavItem[] = [
   // A Cashier's one inventory surface: the blind Stock take (MP-35). The
   // inventory *list* stays Owner-only; this deep-links straight to the count.
   { key: "inventory", label: "Stock take", href: "/inventory/stock-take", icon: "list" },
+  // The end-of-day ritual: count the drawer, declare it blind (MP-40).
+  { key: "day-close", label: "Day close", href: "/day-close", icon: "cash" },
 ];
 
 export function navFor(role: Role): NavItem[] {
@@ -48,6 +51,7 @@ export const SECTION_META: Record<string, SectionMeta> = {
     subtitle: "Catalog and per-shop stock.",
   },
   sales: { title: "Sales", subtitle: "Completed sales." },
+  "day-close": { title: "Day close", subtitle: "Count the drawer and close the selling day." },
   shops: {
     title: "Shops",
     subtitle:
