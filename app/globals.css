@@ -585,7 +585,9 @@ textarea.input {
 
 /* filter pills */
 .pills {
-  display: inline-flex;
+  /* block-level: an inline-flex box would share a line with inline siblings
+     (e.g. a submit button after the row), baseline-aligned and gapless */
+  display: flex;
   gap: 8px;
   flex-wrap: wrap;
 }

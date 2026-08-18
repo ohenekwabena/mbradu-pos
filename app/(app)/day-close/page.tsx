@@ -9,15 +9,14 @@ import { createClient } from "@/lib/supabase/server";
 import { DayCloseView } from "./day-close-view";
 import { PickShopToClose } from "./pick-shop-to-close";
 
-/** Owner-only jump to the cash-audit trail (MP-41). Rendered above the blind
- * form — the *history* is where the Over/short lives; nothing here leaks. */
+/** Owner-only jump to the cash-audit trail (MP-41), styled like the history
+ * pages' crumb links: top-left above the content, on the page's left edge —
+ * the *history* is where the Over/short lives; nothing here leaks. */
 function HistoryLink() {
   return (
-    <div className="row" style={{ maxWidth: 560, justifyContent: "flex-end", marginBottom: 12 }}>
-      <Link className="btn btn-secondary btn-sm" href="/day-close/history">
-        <Icon name="history" /> Close history
-      </Link>
-    </div>
+    <Link className="crumb" href="/day-close/history">
+      <Icon name="history" /> Close history
+    </Link>
   );
 }
 
