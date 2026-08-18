@@ -308,6 +308,9 @@ export function CatalogView({
             <Link href="/inventory/stock-take/review" className="btn btn-secondary">
               <Icon name="check" /> Review counts
             </Link>
+            <Link href="/inventory/stock-take/history" className="btn btn-secondary">
+              <Icon name="history" /> Count history
+            </Link>
             <AddMenu onAdd={openAdd} />
           </div>
 

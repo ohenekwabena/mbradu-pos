@@ -45,6 +45,8 @@ export interface LedgerEntry {
   note: string | null;
   actorName: string | null;
   saleId: string | null;
+  /** For a `stock_take` movement: the take it settles (MP-38 provenance). */
+  takeId: string | null;
   /** ISO timestamp. */
   createdAt: string;
   /** The Shop's quantity *after* this movement. */
@@ -309,6 +311,13 @@ export function ItemDetailView({
                         {REASON_META[e.reason].label}
                       </span>
                       {e.note && <div className="it-attr">{e.note}</div>}
+                      {e.takeId && (
+                        <div className="it-attr">
+                          <Link href={`/inventory/stock-take/history/${e.takeId}`}>
+                            View stock take
+                          </Link>
+                        </div>
+                      )}
                     </td>
                     <td>{e.actorName ?? <span className="text-faint">—</span>}</td>
                     <td
