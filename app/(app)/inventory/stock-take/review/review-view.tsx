@@ -149,9 +149,14 @@ function EmptyQueue() {
         <p className="caption" style={{ marginTop: 4 }}>
           When a shop submits a stock take, it lands here for your approval.
         </p>
-        <Link className="btn btn-secondary" href="/inventory/stock-take" style={{ marginTop: 12 }}>
-          <Icon name="list" /> Start a count
-        </Link>
+        <div className="row gap-8" style={{ marginTop: 12, justifyContent: "center" }}>
+          <Link className="btn btn-secondary" href="/inventory/stock-take">
+            <Icon name="list" /> Start a count
+          </Link>
+          <Link className="btn btn-secondary" href="/inventory/stock-take/history">
+            <Icon name="history" /> Count history
+          </Link>
+        </div>
       </div>
     </div>
   );

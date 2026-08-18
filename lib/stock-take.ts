@@ -13,6 +13,8 @@
  * under the `stock_take` ledger reason (MP-34).
  */
 
+import { add, multiply, ZERO, type Pesewas } from "./money";
+
 /** Session lifecycle — mirrors the `stock_takes.status` CHECK. `approved` is
  * written by the Owner-review slice (MP-37); the rest by MP-35's RPCs. */
 export const STOCK_TAKE_STATUSES = ["open", "submitted", "approved", "cancelled"] as const;
@@ -263,4 +265,94 @@ export function parseClassifications(
     value.push({ lineId, reason: row.reason, note: noteText === "" ? null : noteText });
   }
   return { ok: true, value };
+}
+
+// ===========================================================================
+// Stock-take history (MP-38) — the pure logic of the Owner's audit trail:
+// what a settled line's outcome was, the coverage tallies a history row
+// shows, and the take's unexplained loss valued at cost (the Shrinkage
+// arithmetic, Owner-only money).
+// ===========================================================================
+
+/**
+ * One line as the history surfaces see it: a {@link ReviewLine} plus the
+ * Item it counted and the verdict `approve_stock_take` wrote. On an approved
+ * take `stale` is the *stored* flag — history never re-derives staleness,
+ * because it was judged once, at approval time, under row locks; on any other
+ * status it is simply `false`, the column default.
+ */
+export interface HistoryLine extends ReviewLine {
+  /** The Item this line counted — the key into the cost map for valuation. */
+  itemId: string;
+  /** The Owner's classification when this line's Variance posted, else `null`. */
+  varianceReason: VarianceReason | null;
+}
+
+/** {@link ReviewOutcome} widened with `pending` — history also lists open
+ * sessions, whose unresolved lines are neither counted nor skipped. */
+export type HistoryOutcome = ReviewOutcome | "pending";
+
+/** Classify one history line: an unresolved line is `pending`; a resolved one
+ * classifies exactly as review did ({@link reviewOutcome}). */
+export function historyOutcome(line: ReviewLine): HistoryOutcome {
+  if (line.countedQty === null && !line.skipped) return "pending";
+  return reviewOutcome(line);
+}
+
+/** Coverage tallies for a take's history row and detail header. `counted` is
+ * the resolved-with-a-number total, so it always equals
+ * `stale + verified + variance` and `total = counted + skipped + pending`. */
+export interface HistorySummary {
+  total: number;
+  pending: number;
+  skipped: number;
+  counted: number;
+  stale: number;
+  verified: number;
+  variance: number;
+}
+
+/** Tally a take's lines by {@link historyOutcome}. */
+export function historySummary(lines: readonly ReviewLine[]): HistorySummary {
+  const summary: HistorySummary = {
+    total: lines.length,
+    pending: 0,
+    skipped: 0,
+    counted: 0,
+    stale: 0,
+    verified: 0,
+    variance: 0,
+  };
+  for (const line of lines) {
+    const outcome = historyOutcome(line);
+    summary[outcome]++;
+    if (outcome === "stale" || outcome === "verified" || outcome === "variance") {
+      summary.counted++;
+    }
+  }
+  return summary;
+}
+
+/**
+ * A take's **unexplained loss**, valued at *current* Item cost — the per-take
+ * Shrinkage figure (Owner-only money; MP-39's dashboard KPI sums the same
+ * thing). Over the lines the Owner classified `unexplained`, sums the missing
+ * units × the Item's cost. Only losses count: an unexplained *surplus* is a
+ * bookkeeping puzzle, not shrinkage, and must never offset a real loss. A
+ * classification exists only on posted lines (the approval RPC writes it
+ * nowhere else), so skipped / stale / verified lines are naturally excluded;
+ * an Item missing from the cost map contributes zero rather than guessing.
+ */
+export function unexplainedLossPesewas(
+  lines: readonly HistoryLine[],
+  costByItem: ReadonlyMap<string, Pesewas>,
+): Pesewas {
+  let total: Pesewas = ZERO;
+  for (const line of lines) {
+    if (line.varianceReason !== "unexplained") continue;
+    const variance = lineVariance(line);
+    if (variance === null || variance >= 0) continue;
+    total = add(total, multiply(costByItem.get(line.itemId) ?? ZERO, -variance));
+  }
+  return total;
 }

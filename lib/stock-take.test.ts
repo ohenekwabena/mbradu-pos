@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 
 import {
   checkSubmittable,
+  historyOutcome,
+  historySummary,
   lineResolution,
   lineVariance,
   parseClassifications,
@@ -11,7 +13,9 @@ import {
   reviewSummary,
   STOCK_TAKE_STATUSES,
   takeProgress,
+  unexplainedLossPesewas,
   VARIANCE_REASONS,
+  type HistoryLine,
   type ReviewLine,
   type TakeLineState,
 } from "./stock-take";
@@ -230,5 +234,117 @@ describe("parseClassifications", () => {
         { lineId: "line-1", reason: "expired", note: "" },
       ]).ok,
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stock-take history (MP-38)
+// ---------------------------------------------------------------------------
+
+/** A history line: defaults to pending, overridable per test. */
+const historic = (over: Partial<HistoryLine> = {}): HistoryLine => ({
+  itemId: "item-1",
+  expectedQty: null,
+  countedQty: null,
+  skipped: false,
+  stale: false,
+  varianceReason: null,
+  ...over,
+});
+
+describe("historyOutcome", () => {
+  it("classifies an unresolved line as pending — an open take's unanswered question", () => {
+    expect(historyOutcome(historic())).toBe("pending");
+  });
+
+  it("classifies resolved lines exactly as review did", () => {
+    expect(historyOutcome(historic({ skipped: true }))).toBe("skipped");
+    expect(historyOutcome(historic({ expectedQty: 5, countedQty: 5 }))).toBe("verified");
+    expect(historyOutcome(historic({ expectedQty: 5, countedQty: 3 }))).toBe("variance");
+    expect(historyOutcome(historic({ expectedQty: 5, countedQty: 5, stale: true }))).toBe("stale");
+  });
+});
+
+describe("historySummary", () => {
+  it("tallies by outcome, with counted = stale + verified + variance", () => {
+    const lines = [
+      historic({ expectedQty: 5, countedQty: 3 }), // variance
+      historic({ expectedQty: 2, countedQty: 2 }), // verified
+      historic({ expectedQty: 9, countedQty: 1, stale: true }), // stale
+      historic({ skipped: true }),
+      historic(), // pending
+      historic({ expectedQty: 0, countedQty: 0 }), // verified
+    ];
+    expect(historySummary(lines)).toEqual({
+      total: 6,
+      pending: 1,
+      skipped: 1,
+      counted: 4,
+      stale: 1,
+      verified: 2,
+      variance: 1,
+    });
+  });
+
+  it("is all zeros for no lines", () => {
+    expect(historySummary([])).toEqual({
+      total: 0,
+      pending: 0,
+      skipped: 0,
+      counted: 0,
+      stale: 0,
+      verified: 0,
+      variance: 0,
+    });
+  });
+});
+
+describe("unexplainedLossPesewas", () => {
+  const costs = new Map([
+    ["item-1", 500], // GH₵ 5.00
+    ["item-2", 1200], // GH₵ 12.00
+  ]);
+
+  it("sums missing units × current cost over unexplained lines only", () => {
+    const lines = [
+      // 3 missing at GH₵ 5.00 — counts.
+      historic({ expectedQty: 10, countedQty: 7, varianceReason: "unexplained" }),
+      // 1 missing at GH₵ 12.00 — counts.
+      historic({ itemId: "item-2", expectedQty: 4, countedQty: 3, varianceReason: "unexplained" }),
+      // Explained losses never count, whatever their size.
+      historic({ itemId: "item-2", expectedQty: 9, countedQty: 0, varianceReason: "damaged" }),
+      historic({ expectedQty: 6, countedQty: 4, varianceReason: "expired" }),
+      historic({ expectedQty: 6, countedQty: 5, varianceReason: "other" }),
+    ];
+    expect(unexplainedLossPesewas(lines, costs)).toBe(3 * 500 + 1 * 1200);
+  });
+
+  it("never lets an unexplained surplus offset a real loss", () => {
+    const lines = [
+      historic({ expectedQty: 10, countedQty: 8, varianceReason: "unexplained" }), // −2
+      historic({ itemId: "item-2", expectedQty: 3, countedQty: 5, varianceReason: "unexplained" }), // +2
+    ];
+    expect(unexplainedLossPesewas(lines, costs)).toBe(2 * 500);
+  });
+
+  it("excludes unclassified lines (verified / stale / skipped never carry a reason)", () => {
+    const lines = [
+      historic({ expectedQty: 5, countedQty: 5 }),
+      historic({ expectedQty: 9, countedQty: 1, stale: true }),
+      historic({ skipped: true }),
+      historic(),
+    ];
+    expect(unexplainedLossPesewas(lines, costs)).toBe(0);
+  });
+
+  it("values an Item missing from the cost map at zero rather than guessing", () => {
+    const lines = [
+      historic({ itemId: "item-unknown", expectedQty: 5, countedQty: 0, varianceReason: "unexplained" }),
+    ];
+    expect(unexplainedLossPesewas(lines, costs)).toBe(0);
+  });
+
+  it("is zero for no lines", () => {
+    expect(unexplainedLossPesewas([], costs)).toBe(0);
   });
 });

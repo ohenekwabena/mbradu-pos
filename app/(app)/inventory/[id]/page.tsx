@@ -47,7 +47,7 @@ export default async function ItemDetailPage({
       supabase.from("shop_stock").select("shop_id, quantity").eq("item_id", id),
       supabase
         .from("stock_movements")
-        .select("id, shop_id, reason, amount, note, actor, sale_id, created_at")
+        .select("id, shop_id, reason, amount, note, actor, sale_id, take_line_id, created_at")
         .eq("item_id", id)
         .order("created_at", { ascending: true })
         .order("id", { ascending: true }),
@@ -76,6 +76,23 @@ export default async function ItemDetailPage({
     }
   }
 
+  // Resolve stock-take provenance: a `stock_take` movement names the count
+  // line it settled (MP-37); mapping line → take lets the ledger link back to
+  // the take's audit record (MP-38). The masking view scopes rows, not ids.
+  const takeLineIds = [
+    ...new Set(movements.map((m) => m.take_line_id).filter(Boolean) as string[]),
+  ];
+  const takeByLine = new Map<string, string>();
+  if (takeLineIds.length > 0) {
+    const { data: takeLineRows } = await supabase
+      .from("stock_take_lines_visible")
+      .select("id, take_id")
+      .in("id", takeLineIds);
+    for (const row of takeLineRows ?? []) {
+      takeByLine.set(row.id as string, row.take_id as string);
+    }
+  }
+
   // Per-Shop current quantity (a row's existence = the Shop carries the Item).
   const carriedStock = (stockRows ?? [])
     .map((r) => ({
@@ -101,6 +118,7 @@ export default async function ItemDetailPage({
       note: (m.note ?? null) as string | null,
       actorName: m.actor ? (actorName.get(m.actor as string) ?? null) : null,
       saleId: (m.sale_id ?? null) as string | null,
+      takeId: m.take_line_id ? (takeByLine.get(m.take_line_id as string) ?? null) : null,
       createdAt: m.created_at as string,
       balance,
     };
