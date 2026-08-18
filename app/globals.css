@@ -2636,6 +2636,29 @@ table.tbl tr:last-child td {
   }
 }
 
+/* The Owner row grew a fifth KPI — Shrinkage (MP-39). Same specificity story as
+   .kpi-row-2: the two-class selector outranks the generic .kpi-row collapses,
+   so every breakpoint is restated here (with a mid step, since five money
+   figures don't fit two columns of GH₵ values until they can go 2-wide). */
+.kpi-row.kpi-row-5 {
+  grid-template-columns: repeat(5, 1fr);
+}
+@media (max-width: 1280px) {
+  .kpi-row.kpi-row-5 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+@media (max-width: 1080px) {
+  .kpi-row.kpi-row-5 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .kpi-row.kpi-row-5 {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Segmented control (range toggle, stock-health tabs) — reuses .pill. */
 .seg-tabs {
   display: inline-flex;

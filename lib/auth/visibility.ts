@@ -181,9 +181,12 @@ export function assertCan(actor: Actor, action: Action, shop?: string): void {
  * `costPesewas`, `grossProfitPesewas`, `marginRatio`, `inventory_value`, …
  *
  * The dashboard's Owner-only figures (MP-24/26 — COGS, gross profit, margin
- * ratio, inventory value) are all listed, so {@link redactForActor} is a true
- * mirror of the view-model's structural gating rather than a subset of it: a
- * cost-derived field can never reach a Cashier through either path.
+ * ratio, inventory value; MP-39 — Shrinkage, ADR-0006, in every spelling it
+ * travels under: the figure, its per-Shop breakdown, and the Stock-take
+ * module's `unexplainedLoss` synonym) are all listed, so
+ * {@link redactForActor} is a true mirror of the view-model's structural
+ * gating rather than a subset of it: a cost-derived field can never reach a
+ * Cashier through either path.
  */
 const REDACTED_KEYS: ReadonlySet<string> = new Set([
   "cost",
@@ -199,6 +202,11 @@ const REDACTED_KEYS: ReadonlySet<string> = new Set([
   "grossprofitpesewas",
   "inventoryvalue",
   "inventoryvaluepesewas",
+  "shrinkage",
+  "shrinkagepesewas",
+  "shrinkagebyshop",
+  "unexplainedloss",
+  "unexplainedlosspesewas",
 ]);
 
 function normalizeKey(key: string): string {

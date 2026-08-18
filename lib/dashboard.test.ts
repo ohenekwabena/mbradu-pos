@@ -93,6 +93,22 @@ const SALES = [
   },
 ];
 
+// Posted `stock_take` ledger movements with their classification — the
+// Shrinkage source (MP-39). Deliberately mixed: the explained loss and the
+// unexplained *surplus* must both be inert, and May's loss sits outside the
+// Today window but inside the wider ranges.
+const TAKE_MOVEMENTS = [
+  // Today: unexplained losses at both Shops (wigA 2×10000, cosA 3×2000).
+  { itemId: "wigA", shopId: "shopA", amount: -2, varianceReason: "unexplained" as const, createdAt: "2026-06-05T09:00:00Z" },
+  { itemId: "cosA", shopId: "shopB", amount: -3, varianceReason: "unexplained" as const, createdAt: "2026-06-05T10:30:00Z" },
+  // Today, explained (damaged) — excluded from Shrinkage.
+  { itemId: "cosB", shopId: "shopA", amount: -1, varianceReason: "damaged" as const, createdAt: "2026-06-05T09:05:00Z" },
+  // Today, an unexplained SURPLUS — must never offset a real loss.
+  { itemId: "toolA", shopId: "shopA", amount: 4, varianceReason: "unexplained" as const, createdAt: "2026-06-05T09:10:00Z" },
+  // Back in May: unexplained loss (wigA 1×10000) — outside Today.
+  { itemId: "wigA", shopId: "shopB", amount: -1, varianceReason: "unexplained" as const, createdAt: "2026-05-20T12:00:00Z" },
+];
+
 const OWNER: Actor = { role: "owner", shopId: null };
 const CASHIER_B: Actor = { role: "cashier", shopId: "shopB" };
 
@@ -111,6 +127,7 @@ function makeInput(overrides: Partial<DashboardInput> = {}): DashboardInput {
     items: ITEMS.map((i) => ({ ...i })),
     shops: SHOPS.map((s) => ({ ...s })),
     settings: { lowStockThreshold: 5, expiryWarningDays: 30 },
+    stockTakeMovements: TAKE_MOVEMENTS.map((m) => ({ ...m })),
     ...overrides,
   };
 }
@@ -576,6 +593,86 @@ describe("buildDashboard — by-Shop revenue comparison (all Shops)", () => {
   });
 });
 
+describe("buildDashboard — Shrinkage (Owner-only, ADR-0006 / MP-39)", () => {
+  it("sums the period's unexplained losses at current Item cost (all Shops)", () => {
+    const vm = buildDashboard(makeInput());
+    // Today: wigA 2×10000 (shopA) + cosA 3×2000 (shopB) = 26000.
+    expect(vm.owner!.shrinkagePesewas).toBe(26000);
+  });
+
+  it("only unexplained losses count — the damaged Variance and the surplus are inert", () => {
+    // Dropping the excluded rows must not move the figure…
+    const counting = TAKE_MOVEMENTS.filter((m) => m.varianceReason === "unexplained" && m.amount < 0);
+    const vm = buildDashboard(makeInput({ stockTakeMovements: counting.map((m) => ({ ...m })) }));
+    expect(vm.owner!.shrinkagePesewas).toBe(26000);
+    // …and an all-explained period reads zero (surplus alone never goes negative).
+    const explained = buildDashboard(
+      makeInput({
+        stockTakeMovements: TAKE_MOVEMENTS.filter((m) => m.varianceReason !== "unexplained").map((m) => ({ ...m })),
+      }),
+    );
+    expect(explained.owner!.shrinkagePesewas).toBe(0);
+  });
+
+  it("follows the selected window (a wider range picks up May's loss)", () => {
+    const year = buildDashboard(makeInput({ window: resolveDashboardWindow(TODAY, { range: "year" }) }));
+    // Today's 26000 + May's wigA 1×10000 = 36000.
+    expect(year.owner!.shrinkagePesewas).toBe(36000);
+
+    const maySpan = buildDashboard(
+      makeInput({
+        window: resolveDashboardWindow(TODAY, { range: "custom", from: "2026-05-19", to: "2026-05-21" }),
+      }),
+    );
+    expect(maySpan.owner!.shrinkagePesewas).toBe(10000);
+  });
+
+  it("breaks the all-Shops rollup down per Shop, high→low, zero rows included", () => {
+    const shops = [...SHOPS, { id: "shopC", name: "Tema Mall" }];
+    const vm = buildDashboard(makeInput({ shops }));
+    expect(vm.owner!.shrinkageByShop.map((r) => [r.shopId, r.shrinkagePesewas])).toEqual([
+      ["shopA", 20000],
+      ["shopB", 6000],
+      ["shopC", 0],
+    ]);
+    expect(vm.owner!.shrinkageByShop[0].shopName).toBe("Accra Mall");
+    // The rows reconcile with the headline figure.
+    const summed = vm.owner!.shrinkageByShop.reduce((s, r) => s + r.shrinkagePesewas, 0);
+    expect(summed).toBe(vm.owner!.shrinkagePesewas);
+  });
+
+  it("a Shop scope yields that Shop's value alone, with no breakdown", () => {
+    const all = buildDashboard(makeInput());
+    for (const row of all.owner!.shrinkageByShop) {
+      const scoped = buildDashboard(makeInput({ scope: { mode: "shop", shopId: row.shopId } }));
+      // The reconciliation guarantee, mirroring the revenue comparison.
+      expect(scoped.owner!.shrinkagePesewas).toBe(row.shrinkagePesewas);
+      expect(scoped.owner!.shrinkageByShop).toEqual([]);
+    }
+  });
+
+  it("values a loss whose Item has no resolvable cost as zero rather than guessing", () => {
+    const vm = buildDashboard(
+      makeInput({
+        stockTakeMovements: [
+          { itemId: "ghost", shopId: "shopA", amount: -5, varianceReason: "unexplained", createdAt: "2026-06-05T11:00:00Z" },
+        ],
+      }),
+    );
+    expect(vm.owner!.shrinkagePesewas).toBe(0);
+  });
+
+  it("reads zero when no movements were loaded (the input is optional)", () => {
+    const vm = buildDashboard(makeInput({ stockTakeMovements: undefined }));
+    expect(vm.owner!.shrinkagePesewas).toBe(0);
+    // Every Shop still gets its (zero) row, name-ordered on the tie.
+    expect(vm.owner!.shrinkageByShop.map((r) => [r.shopId, r.shrinkagePesewas])).toEqual([
+      ["shopA", 0],
+      ["shopB", 0],
+    ]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Hard redaction — the dashboard payload is tied to the Visibility-policy
 // (lib/auth/visibility): no cost-derived field may appear *anywhere* in a
@@ -609,10 +706,18 @@ describe("buildDashboard — hard redaction (Visibility-policy, end-to-end)", ()
   });
 
   it("the Owner payload does carry the cost-derived figures (the scan has teeth)", () => {
-    // All four live under vm.owner; the scan must find them, or the Cashier
-    // assertion above would pass vacuously.
+    // All of them live under vm.owner (Shrinkage twice over — the figure and its
+    // per-Shop breakdown); the scan must find them, or the Cashier assertion
+    // above would pass vacuously.
     expect([...new Set(collectSensitiveKeys(ownerVm()))].sort()).toEqual(
-      ["cogsPesewas", "grossProfitPesewas", "inventoryValuePesewas", "marginRatio"].sort(),
+      [
+        "cogsPesewas",
+        "grossProfitPesewas",
+        "inventoryValuePesewas",
+        "marginRatio",
+        "shrinkagePesewas",
+        "shrinkageByShop",
+      ].sort(),
     );
   });
 

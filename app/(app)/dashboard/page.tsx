@@ -6,9 +6,11 @@ import {
   resolveDashboardWindow,
   type DashboardSale,
   type DashboardScope,
+  type DashboardStockTakeMovement,
 } from "@/lib/dashboard";
 import { getCurrentProfile } from "@/lib/dal";
 import { type PaymentMethod } from "@/lib/sale";
+import { type VarianceReason } from "@/lib/stock-take";
 import { ALL_SHOPS } from "@/lib/shop-context";
 import { readShopScope } from "@/lib/shop-context-server";
 import { createClient } from "@/lib/supabase/server";
@@ -35,14 +37,27 @@ const SALE_SELECT =
   "id, shop_id, seller, customer_name, total_pesewas, created_at, " +
   "sale_line_items(item_id, quantity), payments(method, amount_pesewas)";
 
+/** A `stock_take` ledger movement row as selected below (the Shrinkage source,
+ * MP-39). `take_line_id` links it to the count line whose classification says
+ * whether the loss was unexplained. */
+type TakeMovementRow = {
+  item_id: string;
+  shop_id: string;
+  amount: number;
+  created_at: string;
+  take_line_id: string | null;
+};
+
 /**
  * The dashboard. Resolves the active Shop scope and the selected **date-range
  * window** (the Owner picks it via `?range`/`?from`/`?to`; a Cashier is pinned to
  * Today), then loads: a window of Sales **plus the immediately-preceding period**
  * (for the period-over-period delta) that powers every flow figure; a small,
  * range-independent newest-first feed for the recent-sales card; every per-Shop
- * stock row with its Item's cost/category/expiry; the Shops; and the business-wide
- * settings. It hands them to the pure {@link buildDashboard} view-model — which
+ * stock row with its Item's cost/category/expiry; the Shops; the business-wide
+ * settings; and — for the Owner only — the window's `stock_take` movements with
+ * their classification, the Shrinkage source (MP-39). It hands them to the pure
+ * {@link buildDashboard} view-model — which
  * rolls them up for the scope, window, and role and applies the Visibility-policy
  * (cost/profit/value are Owner-only). The Owner defaults to the all-Shops rollup
  * and Today, and can narrow the Shop via the switcher and the range via the
@@ -102,7 +117,24 @@ export default async function DashboardPage({
     .limit(RECENT_SALES_LIMIT);
   if (scopeShopId) feedQuery = feedQuery.eq("shop_id", scopeShopId);
 
-  const [aggregateRes, feedRes, itemRes, stockRes, settingsRes] = await Promise.all([
+  // The Shrinkage source (MP-39, ADR-0006): the window's negative `stock_take`
+  // movements (they post at Owner approval). Loaded for the Owner only — the
+  // classification that decides whether one counts is Owner-only money, and
+  // only the owner block (never built for a Cashier) consumes them.
+  let movementQuery = null;
+  if (profile.role === "owner") {
+    let query = supabase
+      .from("stock_movements")
+      .select("item_id, shop_id, amount, created_at, take_line_id")
+      .eq("reason", "stock_take")
+      .lt("amount", 0)
+      .gte("created_at", window.startIso)
+      .lt("created_at", window.endIso);
+    if (scopeShopId) query = query.eq("shop_id", scopeShopId);
+    movementQuery = query;
+  }
+
+  const [aggregateRes, feedRes, itemRes, stockRes, settingsRes, movementRes] = await Promise.all([
     aggregateQuery,
     feedQuery,
     supabase.from("items_catalog").select("id, name, category, cost_pesewas, attributes, archived_at"),
@@ -112,6 +144,7 @@ export default async function DashboardPage({
       .select("low_stock_threshold, expiry_warning_days")
       .eq("id", true)
       .maybeSingle(),
+    movementQuery ?? Promise.resolve({ data: null }),
   ]);
 
   const aggregateRows = (aggregateRes.data ?? []) as unknown as SaleRow[];
@@ -136,6 +169,42 @@ export default async function DashboardPage({
   const recentFeedSales: DashboardSale[] = feedRows.map((row) =>
     toDashboardSale(row, sellerName.get(row.seller) ?? null),
   );
+
+  // Resolve each `stock_take` movement's classification from the masking view
+  // (the base lines table revokes direct SELECT; the view returns the real
+  // variance_reason to the Owner). The approval RPC always writes the link and
+  // the classification together, so dropping an unresolved row is defensive,
+  // not lossy — and the pure transform re-filters to unexplained losses anyway.
+  let stockTakeMovements: DashboardStockTakeMovement[] = [];
+  const movementRows = (movementRes.data ?? []) as unknown as TakeMovementRow[];
+  const lineIds = [
+    ...new Set(movementRows.map((row) => row.take_line_id).filter((id): id is string => id !== null)),
+  ];
+  if (lineIds.length > 0) {
+    const { data: lineRows } = await supabase
+      .from("stock_take_lines_visible")
+      .select("id, variance_reason")
+      .in("id", lineIds);
+    const reasonByLine = new Map(
+      (lineRows ?? []).map((row) => [
+        row.id as string,
+        (row.variance_reason ?? null) as VarianceReason | null,
+      ]),
+    );
+    stockTakeMovements = movementRows.flatMap((row) => {
+      const reason = row.take_line_id ? reasonByLine.get(row.take_line_id) : null;
+      if (!reason) return [];
+      return [
+        {
+          itemId: row.item_id,
+          shopId: row.shop_id,
+          amount: row.amount,
+          varianceReason: reason,
+          createdAt: row.created_at,
+        },
+      ];
+    });
+  }
 
   const items = (itemRes.data ?? []).map((row) => {
     const attributes = (row.attributes ?? {}) as { expiry?: string | null };
@@ -173,6 +242,7 @@ export default async function DashboardPage({
     items,
     shops,
     settings,
+    stockTakeMovements,
   });
 
   return (

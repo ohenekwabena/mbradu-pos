@@ -6,7 +6,8 @@
  * revenue trend (auto-bucketed to the span — by hour / day / week / month /
  * year), the by-Shop revenue comparison (in the all-Shops rollup), the payment
  * mix, stock health (low / out / expiring), a recent-sales feed, and — for the
- * Owner only — cost of goods, gross profit / margin, and on-hand inventory value.
+ * Owner only — cost of goods, gross profit / margin, on-hand inventory value,
+ * and Shrinkage (unexplained stock-take loss valued at cost, ADR-0006).
  *
  * **Date-range window.** The Owner picks a range (Today / last 7 / last 30 days /
  * this month / this year / a custom span that may cross years); a Cashier is
@@ -27,7 +28,8 @@
  * {@link buildDashboard}; the result is presentational data only.
  *
  * **Visibility-policy.** Money that derives from *cost* — COGS, gross profit,
- * margin, inventory value — is Owner-only (CONTEXT.md, ADR-0005). Those figures
+ * margin, inventory value, Shrinkage — is Owner-only (CONTEXT.md, ADR-0005,
+ * ADR-0006). Those figures
  * live under the optional {@link DashboardViewModel.owner} block, which is built
  * **only** when {@link can}`(actor, "cost:view")` — i.e. absent (not nulled) from
  * a Cashier's payload, mirroring `redactForActor`. Everything else (revenue,
@@ -50,7 +52,8 @@
  * PRD → "Dashboard view-model" and stories 31–38, 44. MP-24 ships the Owner
  * all-Shops rollup; MP-25 adds per-Shop drill-down & the revenue-by-Shop
  * comparison; MP-26 the Cashier variant and its hard redaction test. The Owner
- * date-range report generalises the today-only figures to any span.
+ * date-range report generalises the today-only figures to any span. MP-39 adds
+ * the Shrinkage KPI to the owner block.
  */
 
 import { can, type Actor } from "@/lib/auth/visibility";
@@ -59,6 +62,7 @@ import { multiply, sum, ZERO, type Pesewas } from "@/lib/money";
 import { PAYMENT_METHODS, type PaymentMethod } from "@/lib/sale";
 import { shapeSaleRow } from "@/lib/sales-list";
 import { isExpiringSoon, stockStatus } from "@/lib/stock";
+import { type VarianceReason } from "@/lib/stock-take";
 
 // ---------------------------------------------------------------------------
 // Inputs — already-loaded rows, as the Server Component hands them over. Money
@@ -124,6 +128,25 @@ export interface DashboardItem {
 export interface DashboardShop {
   id: string;
   name: string;
+}
+
+/**
+ * One posted `stock_take` ledger movement with the Owner's classification of
+ * the Variance it settled (ADR-0006) — the Shrinkage source rows. The loader
+ * fetches them only for the Owner (the classification is Owner-only, like
+ * cost); which rows actually *count* as Shrinkage — unexplained losses inside
+ * the window — is re-decided in {@link buildDashboard}, so a mis-loaded row is
+ * a no-op, never a wrong figure.
+ */
+export interface DashboardStockTakeMovement {
+  itemId: string;
+  shopId: string;
+  /** Signed units moved (the posted Variance) — negative for a loss. */
+  amount: number;
+  /** How the Owner explained the Variance; only `unexplained` is Shrinkage. */
+  varianceReason: VarianceReason;
+  /** When the movement posted (approval time) — what windows it falls in. */
+  createdAt: string;
 }
 
 /**
@@ -315,6 +338,10 @@ export interface DashboardInput {
   /** Every Shop (for names + the all-Shops count). */
   shops: DashboardShop[];
   settings: { lowStockThreshold: number; expiryWarningDays: number };
+  /** Posted `stock_take` movements for the Shrinkage figure (MP-39). Loaded
+   * only for the Owner — omitted (or empty) for a Cashier, whose payload never
+   * carries an owner block anyway. */
+  stockTakeMovements?: DashboardStockTakeMovement[];
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +405,18 @@ export interface StockHealthEntry {
   expiry: string | null;
 }
 
+/**
+ * One Shop's row in the Owner's per-Shop Shrinkage breakdown. Every Shop
+ * appears (a Shop with no unexplained loss is a zero row), so the rows always
+ * reconcile with the all-Shops {@link DashboardOwnerFigures.shrinkagePesewas}
+ * and with each Shop's single-Shop rollup — mirroring the revenue comparison.
+ */
+export interface ShopShrinkageEntry {
+  shopId: string;
+  shopName: string;
+  shrinkagePesewas: Pesewas;
+}
+
 /** The Owner-only, cost-derived figures (absent from a Cashier's payload). */
 export interface DashboardOwnerFigures {
   /** Cost of goods sold in the period (period lines × current Item cost). */
@@ -388,6 +427,12 @@ export interface DashboardOwnerFigures {
   marginRatio: number | null;
   /** On-hand stock valued at cost, across the scope — **as of now**. */
   inventoryValuePesewas: Pesewas;
+  /** The period's Shrinkage across the scope — unexplained stock-take losses
+   * valued at *current* Item cost (ADR-0006; the theft signal). */
+  shrinkagePesewas: Pesewas;
+  /** The period's Shrinkage per Shop, high→low — the all-Shops rollup only;
+   * empty under a single-Shop scope (mirrors {@link DashboardViewModel.shopComparison}). */
+  shrinkageByShop: ShopShrinkageEntry[];
 }
 
 /** The resolved scope, carrying the Shop name / count for the header. */
@@ -465,8 +510,8 @@ const MAX_DELTA_SPAN_DAYS = 366;
  * it; the payment mix; the by-Shop comparison (all-Shops rollup); stock health
  * (low / out / expiring at the (Item, Shop) grain, **as of now**) and their
  * counts; the recent-sales feed; and, only when the actor may view cost, the
- * Owner block (COGS, gross profit, margin over the window; inventory value as of
- * now).
+ * Owner block (COGS, gross profit, margin, and Shrinkage over the window;
+ * inventory value as of now).
  */
 export function buildDashboard(input: DashboardInput): DashboardViewModel {
   const { actor, scope, window, today, settings } = input;
@@ -484,6 +529,7 @@ export function buildDashboard(input: DashboardInput): DashboardViewModel {
   const sales = inScope(input.sales);
   const feed = inScope(input.recentFeedSales);
   const stock = inScope(input.stock);
+  const takeMovements = inScope(input.stockTakeMovements ?? []);
 
   const resolvedScope: ResolvedScope =
     scope.mode === "shop"
@@ -555,7 +601,10 @@ export function buildDashboard(input: DashboardInput): DashboardViewModel {
   // Owner-only, cost-derived figures — built only when the actor may view cost,
   // so they are absent (not nulled) from a Cashier's payload (Visibility-policy).
   if (can(actor, "cost:view")) {
-    viewModel.owner = buildOwnerFigures(windowSales, stock, itemsById, windowRevenue);
+    viewModel.owner = {
+      ...buildOwnerFigures(windowSales, stock, itemsById, windowRevenue),
+      ...buildShrinkage(takeMovements, itemsById, input.shops, scope, startMs, endMs),
+    };
   }
 
   return viewModel;
@@ -687,13 +736,13 @@ function buildRecentSales(
 /** Owner-only money: the period's COGS and gross profit/margin (from the period's
  * lines × current Item cost), and on-hand inventory value across the scope (as of
  * now). A missing cost is treated as 0 (defensive — the Owner reads cost through
- * items_catalog). */
+ * items_catalog). Shrinkage, the block's other figure, is {@link buildShrinkage}. */
 function buildOwnerFigures(
   windowSales: readonly DashboardSale[],
   stock: readonly DashboardStock[],
   itemsById: ReadonlyMap<string, DashboardItem>,
   windowRevenue: Pesewas,
-): DashboardOwnerFigures {
+): Omit<DashboardOwnerFigures, "shrinkagePesewas" | "shrinkageByShop"> {
   const cogsParts: Pesewas[] = [];
   for (const sale of windowSales) {
     for (const line of sale.lines) {
@@ -716,6 +765,56 @@ function buildOwnerFigures(
     marginRatio: windowRevenue === 0 ? null : grossProfitPesewas / windowRevenue,
     inventoryValuePesewas: sum(valueParts),
   };
+}
+
+/**
+ * Owner-only money (cont.): the period's **Shrinkage** — unexplained loss the
+ * Stock takes surfaced, valued at *current* Item cost (ADR-0006; historical
+ * cost is out of scope for v1). Counts only the posted `stock_take` movements
+ * that are (a) classified `unexplained` — damaged / expired / other-explained
+ * Variances are explained, not shrinkage — (b) **negative** — an unexplained
+ * surplus is a bookkeeping puzzle and must never offset a real loss (mirrors
+ * `unexplainedLossPesewas` in the Stock-take module) — and (c) inside the
+ * window (movements post at approval time). A missing cost counts as 0,
+ * like COGS. The per-Shop breakdown is built only in the all-Shops rollup and
+ * reconciles with the total, mirroring {@link buildShopComparison}.
+ */
+function buildShrinkage(
+  takeMovements: readonly DashboardStockTakeMovement[],
+  itemsById: ReadonlyMap<string, DashboardItem>,
+  shops: readonly DashboardShop[],
+  scope: DashboardScope,
+  startMs: number,
+  endMs: number,
+): Pick<DashboardOwnerFigures, "shrinkagePesewas" | "shrinkageByShop"> {
+  const byShop = new Map<string, Pesewas>();
+  const parts: Pesewas[] = [];
+  for (const movement of takeMovements) {
+    if (movement.varianceReason !== "unexplained" || movement.amount >= 0) continue;
+    const ms = toMs(movement.createdAt);
+    if (ms === null || ms < startMs || ms >= endMs) continue;
+
+    const cost = itemsById.get(movement.itemId)?.costPesewas ?? 0;
+    const value = multiply(cost, -movement.amount);
+    parts.push(value);
+    byShop.set(movement.shopId, (byShop.get(movement.shopId) ?? 0) + value);
+  }
+
+  const shrinkageByShop =
+    scope.mode === "all"
+      ? shops
+          .map((shop) => ({
+            shopId: shop.id,
+            shopName: shop.name,
+            shrinkagePesewas: byShop.get(shop.id) ?? ZERO,
+          }))
+          .sort(
+            (a, b) =>
+              b.shrinkagePesewas - a.shrinkagePesewas || a.shopName.localeCompare(b.shopName),
+          )
+      : [];
+
+  return { shrinkagePesewas: sum(parts), shrinkageByShop };
 }
 
 // ---------------------------------------------------------------------------

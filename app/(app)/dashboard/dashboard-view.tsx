@@ -102,7 +102,7 @@ export function DashboardView({ vm }: { vm: DashboardViewModel }) {
     <>
       {isOwner && <RangeToolbar window={vm.window} />}
 
-      <div className={`kpi-row section ${isOwner ? "" : "kpi-row-2"}`}>
+      <div className={`kpi-row section ${isOwner ? "kpi-row-5" : "kpi-row-2"}`}>
         {isOwner ? <OwnerKpis vm={vm} /> : <CashierKpis vm={vm} />}
       </div>
 
@@ -210,6 +210,15 @@ function Delta({ ratio }: { ratio: number | null }) {
   );
 }
 
+/** The Shrinkage KPI's foot line: all clear, or where the loss sits. In the
+ * all-Shops rollup the worst Shop is named (the cue for the per-Shop drill via
+ * the Shop switcher); inside one Shop the caption says what the figure is. */
+function shrinkageCtx(owner: NonNullable<DashboardViewModel["owner"]>): string {
+  if (owner.shrinkagePesewas === 0) return "no unexplained loss";
+  const top = owner.shrinkageByShop[0];
+  return top && top.shrinkagePesewas > 0 ? `most at ${top.shopName}` : "unexplained, at cost";
+}
+
 function OwnerKpis({ vm }: { vm: DashboardViewModel }) {
   const owner = vm.owner!;
   const isToday = vm.window.range === "today";
@@ -255,6 +264,19 @@ function OwnerKpis({ vm }: { vm: DashboardViewModel }) {
         <div className="kpi-foot">
           <div>
             <span className="ctx">at cost, on hand</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="kpi">
+        <div className="kpi-label">Shrinkage</div>
+        <div className="kpi-top">
+          <span className="kpi-unit">GH₵</span>
+          <span className="kpi-value">{cedisPlain(owner.shrinkagePesewas)}</span>
+        </div>
+        <div className="kpi-foot">
+          <div>
+            <span className="ctx">{shrinkageCtx(owner)}</span>
           </div>
         </div>
       </div>
