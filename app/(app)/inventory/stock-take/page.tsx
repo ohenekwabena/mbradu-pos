@@ -1,9 +1,10 @@
-import { attributeSummary, formatExpiry, type Attributes, type Category } from "@/lib/catalog";
+import { type Attributes, type Category } from "@/lib/catalog";
 import { getCurrentProfile } from "@/lib/dal";
 import { ALL_SHOPS } from "@/lib/shop-context";
 import { readShopScope } from "@/lib/shop-context-server";
 import { createClient } from "@/lib/supabase/server";
 
+import { itemSubline } from "./item-subline";
 import { PickShopToCount } from "./pick-shop-to-count";
 import { StockTakeView, type CountLine, type PickItem } from "./stock-take-view";
 
@@ -85,7 +86,7 @@ export default async function StockTakePage() {
       row.id as string,
       {
         name: row.name as string,
-        subline: subline(row.category as Category, (row.attributes ?? {}) as Attributes),
+        subline: itemSubline(row.category as Category, (row.attributes ?? {}) as Attributes),
       },
     ]),
   );
@@ -144,16 +145,4 @@ export default async function StockTakePage() {
       pickItems={pickItems}
     />
   );
-}
-
-/** Muted second line for a count row: a cosmetic shows size + expiry; a wig or
- * tool its attribute summary (mirrors the sell screen's card subline). */
-function subline(category: Category, attributes: Attributes): string {
-  if (category === "cosmetic") {
-    const parts: string[] = [];
-    if (attributes.size) parts.push(attributes.size);
-    if (attributes.expiry) parts.push(`Exp ${formatExpiry(attributes.expiry)}`);
-    return parts.join(" · ");
-  }
-  return attributeSummary(category, attributes);
 }

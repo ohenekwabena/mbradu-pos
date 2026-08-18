@@ -132,3 +132,135 @@ export function parseScopeInput(input: ScopeInput): ScopeParseResult {
   }
   return { ok: true, value: { itemIds: ids } };
 }
+
+// ===========================================================================
+// Owner review & approval (MP-37) — the pure logic of settling a submitted
+// take: what each line's Variance is, which lines can post (vs stale /
+// verified / skipped), and the validation of the Owner's classifications
+// before they reach the `approve_stock_take` RPC (which re-derives staleness
+// and re-requires a classification per postable Variance, under row locks).
+// ===========================================================================
+
+/** How the Owner explains a non-zero Variance at approval — mirrors the
+ * `stock_take_lines.variance_reason` CHECK. `unexplained` is the theft
+ * signal: it's what the Shrinkage figure (MP-39) sums, valued at cost. */
+export const VARIANCE_REASONS = ["damaged", "expired", "other", "unexplained"] as const;
+export type VarianceReason = (typeof VARIANCE_REASONS)[number];
+
+/** Display names for the classification picker and the ledger note. */
+export const VARIANCE_REASON_LABEL: Record<VarianceReason, string> = {
+  damaged: "Damaged",
+  expired: "Expired",
+  other: "Other (explained)",
+  unexplained: "Unexplained",
+};
+
+/**
+ * One line of a submitted take as the review screen sees it. `expectedQty` is
+ * the Owner-only snapshot (non-null exactly when counted); `stale` is derived
+ * *server-side at render time* — any ledger movement on the line's *(Item,
+ * Shop)* after its snapshot, or a current quantity that no longer matches it.
+ */
+export interface ReviewLine extends TakeLineState {
+  /** The ledger quantity snapshotted when the line was counted (Owner-only). */
+  expectedQty: number | null;
+  /** The *(Item, Shop)* moved after the snapshot — excluded from posting. */
+  stale: boolean;
+}
+
+/**
+ * What approval will do with a line:
+ *   - `skipped` — never counted; nothing to review;
+ *   - `stale` — counted, but invalidated by a later movement: never posted,
+ *     listed for a recount (false shrinkage is the worst failure mode);
+ *   - `verified` — counted dead-on (Variance 0): posts nothing, stands as a
+ *     "verified correct" record;
+ *   - `variance` — a non-zero, postable Variance the Owner must classify.
+ */
+export type ReviewOutcome = "skipped" | "stale" | "verified" | "variance";
+
+/** Classify one review line. Staleness beats the Variance — a stale number
+ * isn't evidence either way. */
+export function reviewOutcome(line: ReviewLine): ReviewOutcome {
+  if (line.countedQty === null) return "skipped";
+  if (line.stale) return "stale";
+  return lineVariance(line) === 0 ? "verified" : "variance";
+}
+
+/** A counted line's Variance (counted − expected snapshot), or `null` while
+ * there's nothing to compare (skipped, or the Owner-only snapshot withheld). */
+export function lineVariance(line: ReviewLine): number | null {
+  if (line.countedQty === null || line.expectedQty === null) return null;
+  return line.countedQty - line.expectedQty;
+}
+
+/** Per-outcome tallies for a take's review header and approve confirmation. */
+export interface ReviewSummary {
+  total: number;
+  skipped: number;
+  stale: number;
+  verified: number;
+  variance: number;
+}
+
+/** Tally a submitted take's lines by {@link reviewOutcome}. */
+export function reviewSummary(lines: readonly ReviewLine[]): ReviewSummary {
+  const summary: ReviewSummary = { total: lines.length, skipped: 0, stale: 0, verified: 0, variance: 0 };
+  for (const line of lines) summary[reviewOutcome(line)]++;
+  return summary;
+}
+
+/** One raw classification row from the review form (all strings). */
+export interface ClassificationInput {
+  lineId: string;
+  reason: string;
+  note: string;
+}
+
+/** A validated classification, ready for `approve_stock_take`. */
+export interface Classification {
+  lineId: string;
+  reason: VarianceReason;
+  /** Trimmed optional note, `null` when blank. */
+  note: string | null;
+}
+
+export type ClassificationsParseResult =
+  | { ok: true; value: Classification[] }
+  | { ok: false; error: string };
+
+function isVarianceReason(value: string): value is VarianceReason {
+  return (VARIANCE_REASONS as readonly string[]).includes(value);
+}
+
+/**
+ * Validate + normalize the Owner's classification rows: every row needs a line
+ * id and a reason from {@link VARIANCE_REASONS} (fail closed on anything
+ * else), notes are trimmed (blank → `null`), and a duplicated line id is
+ * rejected rather than silently last-write-wins. *Which* lines require a
+ * classification is not decided here — the `approve_stock_take` RPC re-derives
+ * the postable set under row locks and refuses to approve any uncovered
+ * Variance, so a stale-since-render line simply has its row ignored.
+ */
+export function parseClassifications(
+  rows: readonly ClassificationInput[],
+): ClassificationsParseResult {
+  const seen = new Set<string>();
+  const value: Classification[] = [];
+  for (const row of rows) {
+    const lineId = row.lineId.trim();
+    if (!lineId) return { ok: false, error: "A classification is missing its line — reload and try again." };
+    if (seen.has(lineId)) {
+      return { ok: false, error: "A line was classified twice — reload and try again." };
+    }
+    seen.add(lineId);
+
+    if (!isVarianceReason(row.reason)) {
+      return { ok: false, error: "Classify every difference before approving." };
+    }
+
+    const noteText = row.note.trim();
+    value.push({ lineId, reason: row.reason, note: noteText === "" ? null : noteText });
+  }
+  return { ok: true, value };
+}
