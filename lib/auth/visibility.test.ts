@@ -172,6 +172,23 @@ describe("isSensitiveField — every spelling of cost & friends", () => {
       "unexplainedLoss",
       "unexplained_loss_pesewas",
       "unexplainedLossPesewas",
+      // Day-close theft signals (MP-41, ADR-0007) — the stored Over/short, the
+      // server-computed expected drawer it's judged against, and the
+      // unclosed-day flag containers
+      "over_short",
+      "overShort",
+      "over_short_pesewas",
+      "overShortPesewas",
+      "expected_pesewas",
+      "expectedPesewas",
+      "expected_drawer",
+      "expectedDrawerPesewas",
+      "expected_cash",
+      "expectedCashPesewas",
+      "unclosed_flags",
+      "unclosedFlags",
+      "unclosed_days",
+      "unclosedDays",
     ]) {
       expect(isSensitiveField(key)).toBe(true);
     }
@@ -191,7 +208,21 @@ describe("isSensitiveField — every spelling of cost & friends", () => {
   });
 
   it("leaves ordinary fields alone", () => {
-    for (const key of ["price_pesewas", "pricePesewas", "name", "quantity", "discount"]) {
+    for (const key of [
+      "price_pesewas",
+      "pricePesewas",
+      "name",
+      "quantity",
+      "discount",
+      // A close's declared amount is what the declarer themselves typed — not
+      // a secret from them; and a Stock take's expected *quantity* is masked
+      // structurally by its view, not by this money redactor.
+      "declared_pesewas",
+      "declaredPesewas",
+      "expected_qty",
+      "close_date",
+      "stale",
+    ]) {
       expect(isSensitiveField(key)).toBe(false);
     }
   });
@@ -267,6 +298,25 @@ describe("redactForActor — cost/margin stripped for a Cashier", () => {
     expect(redactForActor(eastLegon, payload)).toEqual({
       today: { revenuePesewas: 64500 },
       owner: {},
+    });
+  });
+
+  it("strips a Day close's Over/short and expected cash, keeping what the declarer typed (MP-41)", () => {
+    const close = {
+      shopId: "shopA",
+      closeDate: "2026-06-04",
+      declaredPesewas: 80000,
+      expectedPesewas: 84500,
+      overShortPesewas: -4500,
+      stale: false,
+      note: "two torn notes",
+    };
+    expect(redactForActor(eastLegon, close)).toEqual({
+      shopId: "shopA",
+      closeDate: "2026-06-04",
+      declaredPesewas: 80000,
+      stale: false,
+      note: "two torn notes",
     });
   });
 });

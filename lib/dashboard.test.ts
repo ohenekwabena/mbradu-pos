@@ -109,6 +109,16 @@ const TAKE_MOVEMENTS = [
   { itemId: "wigA", shopId: "shopB", amount: -1, varianceReason: "unexplained" as const, createdAt: "2026-05-20T12:00:00Z" },
 ];
 
+// Day-close audit rows — the unclosed-day flag source (MP-41). The fixture's
+// Sale instants double as the selling-day markers; inside the 14-day lookback
+// ending yesterday that leaves shopA selling on 06-04 and shopB on 06-01.
+// shopB closed its day, shopA never did → exactly one flag (shopA, yesterday),
+// so the owner block always carries a populated flag for the redaction scan.
+const DAY_CLOSE_AUDIT = {
+  saleTimes: SALES.map((s) => ({ shopId: s.shopId, createdAt: s.createdAt })),
+  closedDays: [{ shopId: "shopB", closeDate: "2026-06-01" }],
+};
+
 const OWNER: Actor = { role: "owner", shopId: null };
 const CASHIER_B: Actor = { role: "cashier", shopId: "shopB" };
 
@@ -128,6 +138,10 @@ function makeInput(overrides: Partial<DashboardInput> = {}): DashboardInput {
     shops: SHOPS.map((s) => ({ ...s })),
     settings: { lowStockThreshold: 5, expiryWarningDays: 30 },
     stockTakeMovements: TAKE_MOVEMENTS.map((m) => ({ ...m })),
+    dayCloseAudit: {
+      saleTimes: DAY_CLOSE_AUDIT.saleTimes.map((s) => ({ ...s })),
+      closedDays: DAY_CLOSE_AUDIT.closedDays.map((c) => ({ ...c })),
+    },
     ...overrides,
   };
 }
@@ -674,6 +688,47 @@ describe("buildDashboard — Shrinkage (Owner-only, ADR-0006 / MP-39)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Unclosed-day flags (MP-41, ADR-0007) — the flag logic itself is tested in
+// lib/day-close.test.ts; here the wiring: the owner block carries the flags,
+// the scope confines them, and a Cashier never gets them.
+// ---------------------------------------------------------------------------
+
+describe("buildDashboard — unclosed-day flags in the owner block (MP-41)", () => {
+  it("flags the Shop that sold yesterday and never closed, not the one that closed", () => {
+    const vm = buildDashboard(makeInput());
+    expect(vm.owner!.unclosedFlags).toEqual([
+      {
+        shopId: "shopA",
+        shopName: "Accra Mall",
+        unclosedDays: ["2026-06-04"],
+        streak: 1,
+        latestLabel: "Yesterday",
+      },
+    ]);
+  });
+
+  it("reads empty when no audit rows were loaded (the input is optional)", () => {
+    const vm = buildDashboard(makeInput({ dayCloseAudit: undefined }));
+    expect(vm.owner!.unclosedFlags).toEqual([]);
+  });
+
+  it("a Shop scope confines the flags to that Shop", () => {
+    const scopedA = buildDashboard(makeInput({ scope: { mode: "shop", shopId: "shopA" } }));
+    expect(scopedA.owner!.unclosedFlags.map((flag) => flag.shopId)).toEqual(["shopA"]);
+    // shopB's one selling day was closed — nothing to flag from inside it.
+    const scopedB = buildDashboard(makeInput({ scope: { mode: "shop", shopId: "shopB" } }));
+    expect(scopedB.owner!.unclosedFlags).toEqual([]);
+  });
+
+  it("a Cashier's payload has no flags — the owner block is never built", () => {
+    const vm = buildDashboard(
+      makeInput({ actor: CASHIER_B, scope: { mode: "shop", shopId: "shopB" } }),
+    );
+    expect(vm.owner).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Hard redaction — the dashboard payload is tied to the Visibility-policy
 // (lib/auth/visibility): no cost-derived field may appear *anywhere* in a
 // Cashier's payload, and the policy's own redactor agrees (defence-in-depth).
@@ -707,8 +762,9 @@ describe("buildDashboard — hard redaction (Visibility-policy, end-to-end)", ()
 
   it("the Owner payload does carry the cost-derived figures (the scan has teeth)", () => {
     // All of them live under vm.owner (Shrinkage twice over — the figure and its
-    // per-Shop breakdown); the scan must find them, or the Cashier assertion
-    // above would pass vacuously.
+    // per-Shop breakdown; the Day-close flags likewise, MP-41 — the container
+    // and each flag's day list); the scan must find them, or the Cashier
+    // assertion above would pass vacuously.
     expect([...new Set(collectSensitiveKeys(ownerVm()))].sort()).toEqual(
       [
         "cogsPesewas",
@@ -717,12 +773,36 @@ describe("buildDashboard — hard redaction (Visibility-policy, end-to-end)", ()
         "marginRatio",
         "shrinkagePesewas",
         "shrinkageByShop",
+        "unclosedFlags",
+        "unclosedDays",
       ].sort(),
     );
   });
 
   it("redactForActor strips every Owner figure when an Owner payload is bound for a Cashier", () => {
     expect(collectSensitiveKeys(redactForActor(CASHIER_B, ownerVm()))).toEqual([]);
+  });
+
+  it("a Day close bound for a Cashier loses its Over/short and expected cash (MP-41)", () => {
+    // The blind declaration's protected money, in the shape the history surface
+    // loads. The scan must see both figures (the spellings are live), and the
+    // redactor must strip both — the declared amount, which the declarer
+    // themselves typed, survives.
+    const close = {
+      shopId: "shopB",
+      closeDate: "2026-06-04",
+      declaredPesewas: 80000,
+      expectedPesewas: 84500,
+      overShortPesewas: -4500,
+      stale: false,
+    };
+    expect(collectSensitiveKeys(close)).toEqual(["expectedPesewas", "overShortPesewas"]);
+    expect(redactForActor(CASHIER_B, close)).toEqual({
+      shopId: "shopB",
+      closeDate: "2026-06-04",
+      declaredPesewas: 80000,
+      stale: false,
+    });
   });
 
   it("leaves a Cashier's already-clean payload untouched (redactForActor is a no-op)", () => {

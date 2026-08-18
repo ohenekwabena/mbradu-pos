@@ -1,3 +1,6 @@
+import Link from "next/link";
+
+import { Icon } from "@/components/icon";
 import { getCurrentProfile } from "@/lib/dal";
 import { ALL_SHOPS } from "@/lib/shop-context";
 import { readShopScope } from "@/lib/shop-context-server";
@@ -5,6 +8,18 @@ import { createClient } from "@/lib/supabase/server";
 
 import { DayCloseView } from "./day-close-view";
 import { PickShopToClose } from "./pick-shop-to-close";
+
+/** Owner-only jump to the cash-audit trail (MP-41). Rendered above the blind
+ * form — the *history* is where the Over/short lives; nothing here leaks. */
+function HistoryLink() {
+  return (
+    <div className="row" style={{ maxWidth: 560, justifyContent: "flex-end", marginBottom: 12 }}>
+      <Link className="btn btn-secondary btn-sm" href="/day-close/history">
+        <Icon name="history" /> Close history
+      </Link>
+    </div>
+  );
+}
 
 /**
  * The blind Day close screen (ADR-0007, MP-40). Resolves the one Shop the
@@ -35,9 +50,12 @@ export default async function DayClosePage() {
     if (profile.role === "owner") {
       const { data } = await supabase.from("shops").select("id, name").order("name");
       return (
-        <PickShopToClose
-          shops={(data ?? []).map((s) => ({ id: s.id as string, name: s.name as string }))}
-        />
+        <>
+          <HistoryLink />
+          <PickShopToClose
+            shops={(data ?? []).map((s) => ({ id: s.id as string, name: s.name as string }))}
+          />
+        </>
       );
     }
     return (
@@ -60,14 +78,17 @@ export default async function DayClosePage() {
   ]);
 
   return (
-    <DayCloseView
-      // Key by the day so a screen left open overnight re-seeds to the new day.
-      key={`${shopId}:${today}`}
-      shopId={shopId}
-      shopName={(shopRow?.name as string | undefined) ?? "this shop"}
-      today={today}
-      todayClosed={Boolean(todayClosed)}
-    />
+    <>
+      {profile.role === "owner" && <HistoryLink />}
+      <DayCloseView
+        // Key by the day so a screen left open overnight re-seeds to the new day.
+        key={`${shopId}:${today}`}
+        shopId={shopId}
+        shopName={(shopRow?.name as string | undefined) ?? "this shop"}
+        today={today}
+        todayClosed={Boolean(todayClosed)}
+      />
+    </>
   );
 }
 
