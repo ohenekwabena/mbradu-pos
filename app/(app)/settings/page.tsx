@@ -5,11 +5,13 @@ import { createClient } from "@/lib/supabase/server";
 import { SettingsView } from "./settings-view";
 
 /**
- * Business-wide settings (Owner-only): the low-stock threshold and expiry-warning
- * window on the single `shop_settings` row (ADR-0005). These drive the inventory
- * status chips and the low-stock / expiring filters (MP-21). Currency is fixed to
- * GH₵ in v1. Read here and edited via {@link SettingsView}; everyone authenticated
- * may read the row, but only the Owner sees this page and may write it.
+ * Business-wide settings (Owner-only): the low-stock threshold, expiry-warning
+ * window, and drawer Float on the single `shop_settings` row (ADR-0005). The
+ * first two drive the inventory status chips and the low-stock / expiring
+ * filters (MP-21); the Float (ADR-0007) is what Day close reconciles drawer
+ * cash against (MP-40). Currency is fixed to GH₵ in v1. Read here and edited
+ * via {@link SettingsView}; everyone authenticated may read the row, but only
+ * the Owner sees this page and may write it.
  */
 export default async function SettingsPage() {
   const profile = await getCurrentProfile();
@@ -20,7 +22,7 @@ export default async function SettingsPage() {
   const supabase = await createClient();
   const { data } = await supabase
     .from("shop_settings")
-    .select("low_stock_threshold, expiry_warning_days")
+    .select("low_stock_threshold, expiry_warning_days, float_pesewas")
     .eq("id", true)
     .maybeSingle();
 
@@ -29,6 +31,7 @@ export default async function SettingsPage() {
     <SettingsView
       lowStockThreshold={(data?.low_stock_threshold ?? 5) as number}
       expiryWarningDays={(data?.expiry_warning_days ?? 30) as number}
+      floatPesewas={(data?.float_pesewas ?? 0) as number}
     />
   );
 }
