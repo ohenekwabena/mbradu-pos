@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 
+import { format } from "./money";
 import {
   EXPIRY_WINDOW_OPTIONS,
   MAX_EXPIRY_WINDOW_DAYS,
+  MAX_FLOAT_PESEWAS,
   MAX_LOW_STOCK_THRESHOLD,
   parseSettingsInput,
   type SettingsInput,
@@ -15,25 +17,35 @@ describe("EXPIRY_WINDOW_OPTIONS", () => {
 });
 
 describe("parseSettingsInput", () => {
-  const base: SettingsInput = { lowStockThreshold: "5", expiryWarningDays: "30" };
+  const base: SettingsInput = {
+    lowStockThreshold: "5",
+    expiryWarningDays: "30",
+    floatAmount: "250",
+  };
 
   it("accepts valid input and normalizes it to integers", () => {
     const result = parseSettingsInput(base);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value).toEqual({ lowStockThreshold: 5, expiryWarningDays: 30 });
+    expect(result.value).toEqual({
+      lowStockThreshold: 5,
+      expiryWarningDays: 30,
+      floatPesewas: 25_000,
+    });
   });
 
   it("accepts a padded/whitespace-wrapped whole number", () => {
-    expect(parseSettingsInput({ lowStockThreshold: " 008 ", expiryWarningDays: " 60 " })).toMatchObject(
-      { ok: true, value: { lowStockThreshold: 8, expiryWarningDays: 60 } },
-    );
+    expect(
+      parseSettingsInput({ lowStockThreshold: " 008 ", expiryWarningDays: " 60 ", floatAmount: " 250 " }),
+    ).toMatchObject({ ok: true, value: { lowStockThreshold: 8, expiryWarningDays: 60 } });
   });
 
-  it("allows 0 for both (only a true stock-out flagged; no expiry warning)", () => {
-    expect(parseSettingsInput({ lowStockThreshold: "0", expiryWarningDays: "0" })).toMatchObject({
+  it("allows 0 for all (only a true stock-out flagged; no expiry warning; empty drawer)", () => {
+    expect(
+      parseSettingsInput({ lowStockThreshold: "0", expiryWarningDays: "0", floatAmount: "0" }),
+    ).toMatchObject({
       ok: true,
-      value: { lowStockThreshold: 0, expiryWarningDays: 0 },
+      value: { lowStockThreshold: 0, expiryWarningDays: 0, floatPesewas: 0 },
     });
   });
 
@@ -59,5 +71,32 @@ describe("parseSettingsInput", () => {
     expect(parseSettingsInput({ ...base, expiryWarningDays: String(MAX_EXPIRY_WINDOW_DAYS) }).ok).toBe(
       true,
     );
+  });
+
+  it("parses the drawer float through the Money module (symbol, commas, decimals)", () => {
+    const result = parseSettingsInput({ ...base, floatAmount: "GH₵ 1,250.50" });
+    expect(result).toMatchObject({ ok: true, value: { floatPesewas: 125_050 } });
+  });
+
+  it("round-trips a formatted float (what the form shows back on load)", () => {
+    const shown = format(25_000, { symbol: false, grouping: false }); // "250.00"
+    expect(parseSettingsInput({ ...base, floatAmount: shown })).toMatchObject({
+      ok: true,
+      value: { floatPesewas: 25_000 },
+    });
+  });
+
+  it("rejects a blank, negative, or non-numeric drawer float", () => {
+    for (const floatAmount of ["", "  ", "-5", "-0.01", "lots", "12..5"]) {
+      expect(parseSettingsInput({ ...base, floatAmount }).ok).toBe(false);
+    }
+  });
+
+  it("rejects a drawer float above the ceiling, accepts one at it", () => {
+    expect(parseSettingsInput({ ...base, floatAmount: format(MAX_FLOAT_PESEWAS + 1) }).ok).toBe(false);
+    expect(parseSettingsInput({ ...base, floatAmount: format(MAX_FLOAT_PESEWAS) })).toMatchObject({
+      ok: true,
+      value: { floatPesewas: MAX_FLOAT_PESEWAS },
+    });
   });
 });

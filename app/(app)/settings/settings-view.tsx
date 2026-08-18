@@ -4,7 +4,7 @@ import { useActionState, useEffect, useState } from "react";
 
 import { Icon } from "@/components/icon";
 import { Select } from "@/components/select";
-import { CEDI_SYMBOL } from "@/lib/money";
+import { CEDI_SYMBOL, format } from "@/lib/money";
 import { EXPIRY_WINDOW_OPTIONS, MAX_LOW_STOCK_THRESHOLD } from "@/lib/settings";
 
 import { saveSettings, type SettingsFormState } from "./actions";
@@ -21,9 +21,11 @@ const INITIAL: SettingsFormState = { status: "idle" };
 export function SettingsView({
   lowStockThreshold,
   expiryWarningDays,
+  floatPesewas,
 }: {
   lowStockThreshold: number;
   expiryWarningDays: number;
+  floatPesewas: number;
 }) {
   const [toast, setToast] = useState<string | null>(null);
 
@@ -38,6 +40,7 @@ export function SettingsView({
       <SettingsForm
         lowStockThreshold={lowStockThreshold}
         expiryWarningDays={expiryWarningDays}
+        floatPesewas={floatPesewas}
         onSaved={setToast}
       />
 
@@ -54,15 +57,18 @@ export function SettingsView({
 }
 
 /** The settings form: a stepper for the low-stock threshold, a select for the
- * expiry-warning window, and the fixed GH₵ currency. Submits to
- * {@link saveSettings} via `useActionState`; reports success up via `onSaved`. */
+ * expiry-warning window, a GH₵ amount for the drawer Float, and the fixed GH₵
+ * currency. Submits to {@link saveSettings} via `useActionState`; reports
+ * success up via `onSaved`. */
 function SettingsForm({
   lowStockThreshold,
   expiryWarningDays,
+  floatPesewas,
   onSaved,
 }: {
   lowStockThreshold: number;
   expiryWarningDays: number;
+  floatPesewas: number;
   onSaved: (message: string) => void;
 }) {
   const [state, formAction, pending] = useActionState(saveSettings, INITIAL);
@@ -138,6 +144,30 @@ function SettingsForm({
               label: `${days} days`,
             }))}
             aria-label="Expiry-warning window"
+          />
+        </div>
+      </div>
+
+      <div className="set-row">
+        <div>
+          <div className="k">Drawer float ({CEDI_SYMBOL})</div>
+          <div className="d">
+            The fixed cash that stays in every shop’s drawer overnight to make
+            change. At Day close, expected drawer cash = float + the day’s cash
+            payments.
+          </div>
+        </div>
+        <div>
+          {/* Uncontrolled, like the catalog money fields: the Money module
+              parses whatever the Owner types ("250", "GH₵ 1,250.50") on save. */}
+          <input
+            className="input tnum"
+            name="float_amount"
+            inputMode="decimal"
+            placeholder="0.00"
+            defaultValue={format(floatPesewas, { symbol: false, grouping: false })}
+            aria-label={`Drawer float (${CEDI_SYMBOL})`}
+            style={{ width: 140 }}
           />
         </div>
       </div>

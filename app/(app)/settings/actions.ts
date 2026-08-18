@@ -14,11 +14,12 @@ export type SettingsFormState =
 
 /**
  * Update the business-wide settings — the single `shop_settings` row's low-stock
- * threshold and expiry-warning window (ADR-0005). Owner-only: gated here with
- * {@link assertCan} for an early reject and again by the "Owner updates settings"
- * RLS policy on the row. Input is validated by {@link parseSettingsInput}; the
- * threshold drives the inventory low-stock flags and the window the expiring-soon
- * flags, so both `/settings` and `/inventory` are revalidated. Bound to the
+ * threshold, expiry-warning window (ADR-0005), and drawer Float (ADR-0007).
+ * Owner-only: gated here with {@link assertCan} for an early reject and again by
+ * the "Owner updates settings" RLS policy on the row. Input is validated by
+ * {@link parseSettingsInput}; the threshold drives the inventory low-stock flags
+ * and the window the expiring-soon flags, so both `/settings` and `/inventory`
+ * are revalidated (the Float is read only at Day close, MP-40). Bound to the
  * settings form via `useActionState`.
  */
 export async function saveSettings(
@@ -31,6 +32,7 @@ export async function saveSettings(
   const input: SettingsInput = {
     lowStockThreshold: String(formData.get("low_stock_threshold") ?? ""),
     expiryWarningDays: String(formData.get("expiry_warning_days") ?? ""),
+    floatAmount: String(formData.get("float_amount") ?? ""),
   };
 
   const parsed = parseSettingsInput(input);
@@ -46,6 +48,7 @@ export async function saveSettings(
     .update({
       low_stock_threshold: parsed.value.lowStockThreshold,
       expiry_warning_days: parsed.value.expiryWarningDays,
+      float_pesewas: parsed.value.floatPesewas,
     })
     .eq("id", true);
   if (error) return { status: "error", message: error.message };
