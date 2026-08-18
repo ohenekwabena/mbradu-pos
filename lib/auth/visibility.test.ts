@@ -158,6 +158,17 @@ describe("isSensitiveField — every spelling of cost & friends", () => {
       "grossProfitPesewas",
       "marginRatio",
       "margin_ratio",
+      // Shrinkage — the Stock-take theft signal (MP-39, ADR-0006), in the
+      // dashboard's spellings and the Stock-take module's synonym
+      "shrinkage",
+      "shrinkage_pesewas",
+      "shrinkagePesewas",
+      "shrinkage_by_shop",
+      "shrinkageByShop",
+      "unexplained_loss",
+      "unexplainedLoss",
+      "unexplained_loss_pesewas",
+      "unexplainedLossPesewas",
     ]) {
       expect(isSensitiveField(key)).toBe(true);
     }
@@ -169,6 +180,8 @@ describe("isSensitiveField — every spelling of cost & friends", () => {
       "grossProfitPesewas",
       "marginRatio",
       "inventoryValuePesewas",
+      "shrinkagePesewas",
+      "shrinkageByShop",
     ]) {
       expect(isSensitiveField(key)).toBe(true);
     }
@@ -241,6 +254,10 @@ describe("redactForActor — cost/margin stripped for a Cashier", () => {
         grossProfitPesewas: 46000,
         marginRatio: 0.71,
         inventoryValuePesewas: 123000,
+        shrinkagePesewas: 26000,
+        // The whole breakdown goes — the container key is itself redacted, so
+        // not even the (harmless) Shop names of a Shrinkage list survive.
+        shrinkageByShop: [{ shopId: "shopA", shopName: "Accra Mall", shrinkagePesewas: 20000 }],
       },
     };
     // Revenue is shared (visible to both roles); every cost-derived figure goes.
