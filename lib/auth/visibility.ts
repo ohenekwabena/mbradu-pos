@@ -50,6 +50,8 @@ export type Action =
   | "stock:correct"
   | "stocktake:count" // start / count / submit a blind Stock take (both roles, own Shop — MP-35)
   | "stocktake:review" // review, approve, or reject a submitted Stock take — Owner-only (MP-37)
+  // Day close — declare the drawer blind at end of day (both roles, own Shop — MP-40).
+  | "dayclose:record"
   // Sales — read and sell are Shop-scoped (Owner spans all Shops).
   | "sale:read"
   | "sale:create"
@@ -96,6 +98,7 @@ const POLICY: Record<Action, Rule> = {
   "stock:correct": { ownerOnly: true, shopScoped: true },
   "stocktake:count": { ownerOnly: false, shopScoped: true },
   "stocktake:review": { ownerOnly: true, shopScoped: false },
+  "dayclose:record": { ownerOnly: false, shopScoped: true },
 
   "sale:read": { ownerOnly: false, shopScoped: true },
   "sale:create": { ownerOnly: false, shopScoped: true },

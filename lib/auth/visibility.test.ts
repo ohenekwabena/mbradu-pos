@@ -26,6 +26,7 @@ describe("can — the Owner spans everything", () => {
     "stock:correct",
     "stocktake:count",
     "stocktake:review",
+    "dayclose:record",
     "sale:read",
     "sale:create",
     "staff:read",
@@ -86,6 +87,7 @@ describe("can — a Cashier is confined to their own Shop", () => {
     expect(can(eastLegon, "inventory:read", "shop-east-legon")).toBe(true);
     expect(can(eastLegon, "stock:read", "shop-east-legon")).toBe(true);
     expect(can(eastLegon, "stocktake:count", "shop-east-legon")).toBe(true);
+    expect(can(eastLegon, "dayclose:record", "shop-east-legon")).toBe(true);
   });
 
   it("treats an omitted Shop as the Cashier's own Shop", () => {
@@ -99,6 +101,7 @@ describe("can — a Cashier is confined to their own Shop", () => {
     expect(can(eastLegon, "inventory:read", OTHER_SHOP)).toBe(false);
     expect(can(eastLegon, "stock:read", OTHER_SHOP)).toBe(false);
     expect(can(eastLegon, "stocktake:count", OTHER_SHOP)).toBe(false);
+    expect(can(eastLegon, "dayclose:record", OTHER_SHOP)).toBe(false);
   });
 
   it("allows a Cashier the shared, non-Shop-scoped reads", () => {
