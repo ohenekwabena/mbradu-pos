@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition, type TransitionStartFunction } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -98,29 +98,41 @@ function periodLabel(window: Window): string {
 export function DashboardView({ vm }: { vm: DashboardViewModel }) {
   const isOwner = vm.owner !== undefined;
   const isAllShops = vm.scope.mode === "all";
+  // A range change re-renders this page on the server; the transition keeps the
+  // current figures up (dimmed, under a spinner) until the new window arrives.
+  const [isPending, startTransition] = useTransition();
 
   return (
     <>
-      {isOwner && <RangeToolbar window={vm.window} />}
+      {isOwner && <RangeToolbar window={vm.window} startTransition={startTransition} />}
 
-      <div className={`kpi-row section ${isOwner ? "kpi-row-5" : "kpi-row-2"}`}>
-        {isOwner ? <OwnerKpis vm={vm} /> : <CashierKpis vm={vm} />}
-      </div>
-
-      {isOwner && (
-        <div className="dash-grid section">
-          <RevenueCard vm={vm} />
-          <div className="stack gap-16">
-            <DayCloseFlagsCard vm={vm} />
-            {isAllShops && <ShopComparisonCard vm={vm} />}
-            <PaymentMixCard vm={vm} />
+      <div className={`dash-body${isPending ? " is-loading" : ""}`} aria-busy={isPending}>
+        {isPending && (
+          <div className="dash-loading" role="status">
+            <span className="spinner" aria-hidden />
+            <span className="sr-only">Loading…</span>
           </div>
-        </div>
-      )}
+        )}
 
-      <div className="dash-grid section">
-        <RecentSalesCard vm={vm} showShop={isAllShops} />
-        <StockHealthCard vm={vm} showShop={isAllShops} isOwner={isOwner} />
+        <div className={`kpi-row section ${isOwner ? "kpi-row-5" : "kpi-row-2"}`}>
+          {isOwner ? <OwnerKpis vm={vm} /> : <CashierKpis vm={vm} />}
+        </div>
+
+        {isOwner && (
+          <div className="dash-grid section">
+            <RevenueCard vm={vm} />
+            <div className="stack gap-16">
+              <DayCloseFlagsCard vm={vm} />
+              {isAllShops && <ShopComparisonCard vm={vm} />}
+              <PaymentMixCard vm={vm} />
+            </div>
+          </div>
+        )}
+
+        <div className="dash-grid section">
+          <RecentSalesCard vm={vm} showShop={isAllShops} />
+          <StockHealthCard vm={vm} showShop={isAllShops} isOwner={isOwner} />
+        </div>
       </div>
     </>
   );
@@ -136,17 +148,26 @@ export function DashboardView({ vm }: { vm: DashboardViewModel }) {
  * the `/sales` archive. The drafts seed from the active window; the page keys this
  * view by the window, so navigating re-seeds them. Spans may cross years.
  */
-function RangeToolbar({ window }: { window: Window }) {
+function RangeToolbar({
+  window,
+  startTransition,
+}: {
+  window: Window;
+  startTransition: TransitionStartFunction;
+}) {
   const router = useRouter();
   const [fromDraft, setFromDraft] = useState(window.fromDate);
   const [toDraft, setToDraft] = useState(window.toDate);
+  // The clicked chip lights up immediately, ahead of the server round trip.
+  const [selected, setSelected] = useState(window.range);
 
   function goToRange(range: DashboardRange) {
-    if (range === "custom") {
-      router.push(`/dashboard?range=custom&from=${fromDraft}&to=${toDraft}`);
-    } else {
-      router.push(`/dashboard?range=${range}`);
-    }
+    setSelected(range);
+    const href =
+      range === "custom"
+        ? `/dashboard?range=custom&from=${fromDraft}&to=${toDraft}`
+        : `/dashboard?range=${range}`;
+    startTransition(() => router.push(href));
   }
 
   return (
@@ -156,7 +177,7 @@ function RangeToolbar({ window }: { window: Window }) {
           <button
             key={range}
             type="button"
-            className={"pill" + (window.range === range ? " active" : "")}
+            className={"pill" + (selected === range ? " active" : "")}
             onClick={() => goToRange(range)}
           >
             {RANGE_LABEL[range]}
@@ -164,7 +185,7 @@ function RangeToolbar({ window }: { window: Window }) {
         ))}
       </div>
 
-      {window.range === "custom" && (
+      {selected === "custom" && (
         <div className="date-range">
           <DatePicker
             value={fromDraft}

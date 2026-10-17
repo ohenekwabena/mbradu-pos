@@ -1480,6 +1480,7 @@ table.tbl tr:last-child td {
   min-height: 50vh;
 }
 .spinner {
+  display: inline-block;
   width: 32px;
   height: 32px;
   border-radius: 50%;
@@ -1491,6 +1492,24 @@ table.tbl tr:last-child td {
   to {
     transform: rotate(360deg);
   }
+}
+/* dashboard: figures dim under a spinner while a new date range loads */
+.dash-body {
+  position: relative;
+}
+.dash-body.is-loading > :not(.dash-loading) {
+  opacity: 0.35;
+  pointer-events: none;
+  transition: opacity 0.15s ease-out;
+}
+.dash-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 120px;
 }
 .sr-only {
   position: absolute;
