@@ -308,6 +308,7 @@ a {
 }
 
 .content {
+  position: relative;
   padding: 32px;
   max-width: var(--content-max);
   width: 100%;
@@ -1514,6 +1515,22 @@ table.tbl tr:last-child td {
   justify-content: center;
   align-items: flex-start;
   padding-top: 120px;
+}
+/* shell: content veiled under a spinner while the Shop context switches
+   (shop-switcher.tsx portals this into .content) */
+.scope-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 120px;
+  background: color-mix(in srgb, var(--bg) 65%, transparent);
+}
+.scope-loading .spinner {
+  position: sticky;
+  top: 120px;
 }
 .sr-only {
   position: absolute;
