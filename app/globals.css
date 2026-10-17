@@ -189,6 +189,10 @@ a {
   position: sticky;
   top: 0;
   height: 100vh;
+  /* sticky makes the rail its own stacking context, so the nav tooltips can
+     only rise as high as the rail itself. Lift it above positioned page
+     content (e.g. .dash-body) but below menus (60+), scrims/drawers (100+). */
+  z-index: 40;
 }
 .brand-mark {
   width: 44px;
