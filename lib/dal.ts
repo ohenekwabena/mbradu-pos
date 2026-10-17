@@ -21,26 +21,32 @@ export interface CurrentProfile {
 }
 
 /**
- * Secure auth check for Server Components / Actions: validates the user via
- * Supabase (`getUser`, which re-checks with the auth server) and loads their
- * profile. Redirects to /login when there is no authenticated user or profile.
- * Memoized per render pass with React `cache`.
+ * Secure auth check for Server Components / Actions: verifies the session JWT
+ * with `getClaims` and loads the user's profile. Redirects to /login when there
+ * is no authenticated user or profile. Memoized per render pass with React
+ * `cache`.
+ *
+ * `getClaims` checks the JWT signature locally against the project's cached
+ * asymmetric (ES256) signing keys — no round trip to the auth server, unlike
+ * `getUser`, which cost ~1s per request. The trade-off is that a session revoked
+ * server-side stays valid here until the JWT expires; that's acceptable because
+ * Postgres/RLS verifies the same JWT on every query anyway, and the lockout we
+ * actually use — `deactivated_at` below — is read fresh on every request.
  */
 export const getCurrentProfile = cache(async (): Promise<CurrentProfile> => {
   const supabase = await createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data } = await supabase.auth.getClaims();
+  const userId = data?.claims.sub;
 
-  if (!user) {
+  if (!userId) {
     redirect("/login");
   }
 
   const { data: profile } = await supabase
     .from("profiles")
     .select("id, role, full_name, shop_id, deactivated_at")
-    .eq("id", user.id)
+    .eq("id", userId)
     .single();
 
   if (!profile) {
@@ -62,8 +68,8 @@ export const getCurrentProfile = cache(async (): Promise<CurrentProfile> => {
   }
 
   return {
-    id: user.id,
-    email: user.email ?? null,
+    id: userId,
+    email: data.claims.email ?? null,
     role: profile.role as ProfileRole,
     fullName: profile.full_name ?? null,
     shopId: profile.shop_id ?? null,
