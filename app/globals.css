@@ -1473,6 +1473,37 @@ table.tbl tr:last-child td {
   }
 }
 
+/* loading: route-level spinner (app/(app)/loading.tsx) */
+.page-loading {
+  display: grid;
+  place-items: center;
+  min-height: 50vh;
+}
+.spinner {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid var(--grey-200);
+  border-top-color: var(--primary);
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* empty state */
 .empty-ico {
   width: 56px;
