@@ -80,6 +80,7 @@ export default async function SellPage() {
 
   return (
     <SellView
+      shopId={shopId}
       shopName={(shopRow?.name as string | undefined) ?? "this shop"}
       items={items}
       lowThreshold={lowThreshold}

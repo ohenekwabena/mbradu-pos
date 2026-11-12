@@ -2401,6 +2401,17 @@ table.tbl tr:last-child td {
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
+/* The cart's editable controls, frozen while a Sale is pending (ADR-0008). A bare
+   wrapper: no fieldset chrome. */
+.cart-fields {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.cart-fields:disabled {
+  opacity: 0.6;
+}
 .cart-empty {
   text-align: center;
   color: var(--muted);
