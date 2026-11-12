@@ -100,8 +100,8 @@ export function saleErrorMessage(error: SaleError, itemName: (itemId: string) =>
   switch (error.code) {
     case "insufficient_stock":
       return error.available !== undefined && error.available > 0
-        ? `Only ${error.available} of ${label} left at this shop. Lower the quantity and try again.`
-        : `${name ? `“${name}” is` : "An item is"} out of stock at this shop. Remove it and try again.`;
+        ? `Only ${error.available} of ${label} left at this shop — the cart has been updated. Check it and complete again.`
+        : `${name ? `“${name}” is` : "An item is"} out of stock at this shop — it’s been taken out of the cart.`;
     case "not_carried":
       return `${name ? `“${name}” isn’t` : "An item isn’t"} stocked at this shop. Remove it and try again.`;
     case "unknown_item":

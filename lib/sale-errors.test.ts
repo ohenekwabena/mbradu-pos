@@ -48,7 +48,9 @@ describe("parseSaleError", () => {
 describe("saleErrorMessage", () => {
   it("names the item and what's left for insufficient stock", () => {
     const msg = saleErrorMessage({ code: "insufficient_stock", itemId: "item-1", available: 1 }, lookup);
-    expect(msg).toBe("Only 1 of “Ruby Woo – Shade 3” left at this shop. Lower the quantity and try again.");
+    expect(msg).toBe(
+      "Only 1 of “Ruby Woo – Shade 3” left at this shop — the cart has been updated. Check it and complete again.",
+    );
   });
 
   it("says out of stock when none are left", () => {
