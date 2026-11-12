@@ -13,7 +13,9 @@ export const config = {
     /*
      * Match all request paths except static assets and image files. Auth
      * should run on everything else, including the app routes and /login.
+     * The PWA manifest and service worker (#32) are public: browsers fetch the
+     * manifest without cookies, and a redirect to /login would break install.
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
