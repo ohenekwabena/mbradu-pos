@@ -1,13 +1,31 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { Icon } from "@/components/icon";
 import { type Category } from "@/lib/catalog";
 import { format, tryParse } from "@/lib/money";
-import { changeDue, METHOD_LABEL, PAYMENT_METHODS, saleTotal, type PaymentMethod } from "@/lib/sale";
-
-import { completeSale, type SaleFormState } from "./actions";
+import {
+  ATTEMPT_TIMEOUT_MS,
+  IDLE,
+  isInFlight,
+  isLocked,
+  pendingSaleReducer,
+  sendWithRetry,
+  type AttemptResult,
+} from "@/lib/pending-sale";
+import {
+  changeDue,
+  METHOD_LABEL,
+  parseSaleInput,
+  PAYMENT_METHODS,
+  saleTotal,
+  type PaymentMethod,
+  type SaleWrite,
+} from "@/lib/sale";
+import { saleErrorMessage } from "@/lib/sale-errors";
+import { createClient } from "@/lib/supabase/client";
 
 /** One sellable Item at the current Shop: the catalog facts plus the live on-hand
  * `stock` (it's carried here, possibly 0). */
@@ -36,7 +54,34 @@ interface CartLine {
   qty: number;
 }
 
-const INITIAL: SaleFormState = { status: "idle" };
+/** A validated checkout, frozen while it's pending so every retry resends the
+ * exact same Sale under the same id. */
+interface Checkout extends SaleWrite {
+  saleId: string;
+}
+
+/** One attempt: call `complete_sale` straight from the phone (no server hop),
+ * bounded by a timeout so a hung mobile connection fails over to a retry. */
+async function attemptSale(checkout: Checkout): Promise<AttemptResult> {
+  const { data, error } = await createClient()
+    .rpc("complete_sale", {
+      p_sale_id: checkout.saleId,
+      p_shop_id: checkout.shopId,
+      p_customer: checkout.customer ?? "",
+      p_lines: checkout.lines,
+      p_payments: checkout.payments,
+      p_expected_total: checkout.total,
+    })
+    .abortSignal(AbortSignal.timeout(ATTEMPT_TIMEOUT_MS));
+  return error ? { ok: false, error } : { ok: true, saleId: data as string };
+}
+
+/** Where a confirmed Sale goes: its receipt, carrying the cash tendered (not
+ * persisted) for the change line when cash was taken. */
+function receiptHref(saleId: string, checkout: Checkout): string {
+  const hasCash = checkout.payments.some((payment) => payment.method === "cash");
+  return hasCash ? `/sales/${saleId}?tendered=${checkout.tendered}` : `/sales/${saleId}`;
+}
 
 /** Render integer pesewas as a plain decimal (no symbol, no grouping) for an
  * amount input — round-trips through {@link tryParse} exactly. */
@@ -66,15 +111,22 @@ function stockLabel(stock: number): string {
  * Transfer — whose amounts must **sum to the total** before the sale can
  * complete (the live Remaining / Over by / Balanced indicator). One method
  * auto-fills to the whole total; Cash additionally takes a tendered amount and
- * shows the change for the cash portion. Completing submits the cart + payments
- * to {@link completeSale}, which writes the sale atomically and redirects to the
- * receipt.
+ * shows the change for the cash portion.
+ *
+ * Completing (ADR-0008, #28) validates on the phone, then calls `complete_sale`
+ * **directly** — one request, no server action. The checkout is then a **pending
+ * Sale**: the cart locks, transient failures retry automatically under the same
+ * Sale id (idempotent, so never booked twice), a business rejection unlocks the
+ * cart with a plain-English message, and if retries run out the cashier gets
+ * *Still sending… Retry*. Only one pending Sale exists at a time.
  */
 export function SellView({
+  shopId,
   shopName,
   items,
   lowThreshold,
 }: {
+  shopId: string;
   shopName: string;
   items: SellItem[];
   lowThreshold: number;
@@ -87,18 +139,31 @@ export function SellView({
   const [methods, setMethods] = useState<PaymentMethod[]>(["cash"]);
   const [amounts, setAmounts] = useState<Partial<Record<PaymentMethod, string>>>({});
   const [tendered, setTendered] = useState("");
-  const [state, formAction, pending] = useActionState(completeSale, INITIAL);
-  // The Sale's id: minted on the first Complete tap and resent on every retry, so
-  // a timed-out attempt that actually landed can never be booked twice
-  // (ADR-0008). Minted client-side at submit (not during render) so server and
-  // client markup agree. A completed Sale navigates to its receipt, unmounting
-  // this screen, so the next checkout starts with a fresh id.
+  const router = useRouter();
+  const [sale, dispatch] = useReducer(pendingSaleReducer, IDLE);
+  const [inputError, setInputError] = useState<string | null>(null);
+  // The Sale's id: minted on the first Complete tap and kept across retries and
+  // re-submits, so an attempt that landed without an answer can never be booked
+  // twice. Minted at submit (not during render) so server and client markup
+  // agree. A completed Sale navigates to its receipt, unmounting this screen, so
+  // the next checkout starts with a fresh id.
   const saleIdRef = useRef<string | null>(null);
-  const saleIdInput = useRef<HTMLInputElement>(null);
+  // The checkout being sent, frozen so Retry resends exactly the same Sale.
+  const checkoutRef = useRef<Checkout | null>(null);
+  const locked = isLocked(sale);
+  const inFlight = isInFlight(sale);
   // On narrow screens the cart is a bottom sheet (see .cart-fab / .cart-open in
   // globals.css); on wider screens it's the always-open sticky sidebar and this
   // flag is inert.
   const [cartOpen, setCartOpen] = useState(false);
+
+  // Leaving the page with an unconfirmed Sale would abandon it mid-flight.
+  useEffect(() => {
+    if (!locked || sale.status === "completed") return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [locked, sale.status]);
 
   // While the sheet is up, lock the page behind it and let Escape dismiss it.
   useEffect(() => {
@@ -143,7 +208,7 @@ export function SellView({
   const canComplete = cart.size > 0 && total > 0 && remaining === 0;
 
   function addItem(item: SellItem) {
-    if (item.stock <= 0) return;
+    if (item.stock <= 0 || locked) return;
     setCart((prev) => {
       const next = new Map(prev);
       const line = next.get(item.id);
@@ -183,10 +248,61 @@ export function SellView({
     }
   }
 
-  const cartPayload = JSON.stringify(lines.map((line) => ({ itemId: line.item.id, quantity: line.qty })));
-  const paymentsPayload = JSON.stringify(
-    methods.map((method) => ({ method, amount: sole ? soleAmount : amounts[method] ?? "" })),
-  );
+  const itemName = (id: string) => items.find((item) => item.id === id)?.name;
+
+  /** Send the frozen checkout until it resolves; navigate on a confirmed Sale. */
+  async function send(checkout: Checkout) {
+    const final = await sendWithRetry(() => attemptSale(checkout), dispatch);
+    if (final.type === "completed") {
+      router.push(receiptHref(final.saleId, checkout));
+    } else if (final.type === "rejected" && final.error.code === "sale_id_conflict") {
+      saleIdRef.current = null; // that id is unusable; the next attempt mints another
+    }
+  }
+
+  function complete() {
+    if (locked) return;
+    setInputError(null);
+    const parsed = parseSaleInput({
+      shopId,
+      customer,
+      lines: lines.map((line) => ({
+        itemId: line.item.id,
+        name: line.item.name,
+        quantity: line.qty,
+        unitPrice: line.item.price,
+        available: line.item.stock,
+      })),
+      payments: methods.map((method) => ({ method, amount: sole ? soleAmount : amounts[method] ?? "" })),
+      tendered,
+    });
+    if (!parsed.ok) {
+      setInputError(parsed.error);
+      return;
+    }
+    saleIdRef.current ??= crypto.randomUUID();
+    const checkout: Checkout = { ...parsed.value, saleId: saleIdRef.current };
+    checkoutRef.current = checkout;
+    void send(checkout);
+  }
+
+  function retry() {
+    if (sale.status !== "stalled" || !checkoutRef.current) return;
+    void send(checkoutRef.current);
+  }
+
+  const errorMessage =
+    inputError ?? (sale.status === "rejected" ? saleErrorMessage(sale.error, itemName) : null);
+  const buttonLabel =
+    sale.status === "sending" && sale.attempt > 1
+      ? `Retrying… (${sale.attempt} of ${sale.of})`
+      : sale.status === "waiting"
+        ? "Connection slow — retrying…"
+        : sale.status === "completed"
+          ? "Sale recorded — opening receipt…"
+          : inFlight
+            ? "Completing…"
+            : "Complete sale";
 
   const remainingLabel = remaining > 0 ? "Remaining" : remaining < 0 ? "Over by" : "Balanced";
   const remainingColor =
@@ -283,7 +399,7 @@ export function SellView({
                         type="button"
                         className="add"
                         aria-label={`Add ${item.name}`}
-                        disabled={oos}
+                        disabled={oos || locked}
                         onClick={() => addItem(item)}
                       >
                         <Icon name={oos ? "x" : "plus"} />
@@ -311,7 +427,7 @@ export function SellView({
                       type="button"
                       className="add"
                       aria-label={`Add ${item.name}`}
-                      disabled={oos}
+                      disabled={oos || locked}
                       onClick={() => addItem(item)}
                     >
                       <Icon name={oos ? "x" : "plus"} />
@@ -325,17 +441,13 @@ export function SellView({
 
         {/* Current sale — the cart is the form that completes the sale */}
         <form
-          action={formAction}
-          onSubmit={() => {
-            saleIdRef.current ??= crypto.randomUUID();
-            if (saleIdInput.current) saleIdInput.current.value = saleIdRef.current;
+          onSubmit={(e) => {
+            e.preventDefault();
+            complete();
           }}
-          className={"card cart" + (cartOpen ? " cart-open" : "")}>
-          <input type="hidden" name="cart" value={cartPayload} />
-          <input type="hidden" name="payments" value={paymentsPayload} />
-          <input type="hidden" name="saleId" ref={saleIdInput} />
-          <input type="hidden" name="expectedTotal" value={total} />
-
+          className={"card cart" + (cartOpen ? " cart-open" : "")}
+          aria-busy={inFlight}
+        >
           {/* Bottom-sheet grab handle — desktop-hidden (sidebar needs no handle) */}
           <div className="sheet-handle" aria-hidden="true" />
 
@@ -356,136 +468,152 @@ export function SellView({
             </div>
           </div>
 
-          <div className="field" style={{ marginBottom: 12 }}>
-            <input
-              className="input"
-              name="customer"
-              placeholder="Customer name (optional)"
-              aria-label="Customer name"
-              value={customer}
-              onChange={(e) => setCustomer(e.target.value)}
-            />
-          </div>
+          {/* Everything editable freezes while a Sale is pending (one at a time). */}
+          <fieldset disabled={locked} className="cart-fields">
+            <div className="field" style={{ marginBottom: 12 }}>
+              <input
+                className="input"
+                name="customer"
+                placeholder="Customer name (optional)"
+                aria-label="Customer name"
+                value={customer}
+                onChange={(e) => setCustomer(e.target.value)}
+              />
+            </div>
 
-          <div className="lines">
-            {cart.size === 0 ? (
-              <div className="cart-empty">Search to add items to the sale.</div>
-            ) : (
-              lines.map(({ item, qty }) => (
-                <div key={item.id} className="line">
-                  <div className="ln-name">
-                    <div className="nm">{item.name}</div>
-                    <div className="up tnum">{format(item.price)} ea</div>
+            <div className="lines">
+              {cart.size === 0 ? (
+                <div className="cart-empty">Search to add items to the sale.</div>
+              ) : (
+                lines.map(({ item, qty }) => (
+                  <div key={item.id} className="line">
+                    <div className="ln-name">
+                      <div className="nm">{item.name}</div>
+                      <div className="up tnum">{format(item.price)} ea</div>
+                    </div>
+                    <div className="stepper">
+                      <button type="button" aria-label={`Decrease ${item.name}`} onClick={() => setQty(item.id, qty - 1)}>
+                        −
+                      </button>
+                      <span className="val">{qty}</span>
+                      <button
+                        type="button"
+                        aria-label={`Increase ${item.name}`}
+                        disabled={qty >= item.stock}
+                        onClick={() => setQty(item.id, qty + 1)}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <div className="ln-total tnum">{format(item.price * qty)}</div>
                   </div>
-                  <div className="stepper">
-                    <button type="button" aria-label={`Decrease ${item.name}`} onClick={() => setQty(item.id, qty - 1)}>
-                      −
-                    </button>
-                    <span className="val">{qty}</span>
-                    <button
-                      type="button"
-                      aria-label={`Increase ${item.name}`}
-                      disabled={qty >= item.stock}
-                      onClick={() => setQty(item.id, qty + 1)}
-                    >
-                      +
-                    </button>
-                  </div>
-                  <div className="ln-total tnum">{format(item.price * qty)}</div>
-                </div>
-              ))
-            )}
-          </div>
-
-          <div className="grand">
-            <span className="text-muted body-med">Total</span>
-            <span className="gv" aria-live="polite">
-              {format(total)}
-            </span>
-          </div>
-
-          {/* Payment — split across one or more methods, summing to the total (MP-23) */}
-          <div className="overline text-faint" style={{ margin: "4px 0 8px" }}>
-            Payment
-          </div>
-          <div className="pay-methods">
-            {PAYMENT_METHODS.map((method) => {
-              const active = methods.includes(method);
-              return (
-                <button
-                  key={method}
-                  type="button"
-                  className={"pill" + (active ? " active" : "")}
-                  aria-pressed={active}
-                  onClick={() => toggleMethod(method)}
-                >
-                  {METHOD_LABEL[method]}
-                </button>
-              );
-            })}
-          </div>
-
-          {methods.map((method) => (
-            <div key={method}>
-              <div className="pay-row">
-                <label htmlFor={`pay-${method}`}>{METHOD_LABEL[method]}</label>
-                <input
-                  id={`pay-${method}`}
-                  className="input tnum"
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  value={sole ? soleAmount : amounts[method] ?? ""}
-                  readOnly={sole}
-                  aria-readonly={sole}
-                  onChange={(e) => setAmounts((prev) => ({ ...prev, [method]: e.target.value }))}
-                />
-              </div>
-              {method === "cash" && (
-                <>
-                  <div className="pay-row">
-                    <label htmlFor="tendered">Tendered</label>
-                    <input
-                      id="tendered"
-                      name="tendered"
-                      className="input tnum"
-                      inputMode="decimal"
-                      placeholder="0.00"
-                      value={tendered}
-                      onChange={(e) => setTendered(e.target.value)}
-                    />
-                  </div>
-                  <div className="remaining" style={{ paddingTop: 0 }}>
-                    <span className="text-muted">Change due</span>
-                    <span className="num body-med" style={{ color: change > 0 ? "var(--success)" : undefined }}>
-                      {format(change)}
-                    </span>
-                  </div>
-                </>
+                ))
               )}
             </div>
-          ))}
 
-          <div className="remaining">
-            <span className="text-muted">{remainingLabel}</span>
-            <span className="num body-med" aria-live="polite" style={{ color: remainingColor }}>
-              {format(remaining < 0 ? -remaining : remaining)}
-            </span>
-          </div>
+            <div className="grand">
+              <span className="text-muted body-med">Total</span>
+              <span className="gv" aria-live="polite">
+                {format(total)}
+              </span>
+            </div>
 
-          {state.status === "error" && (
-            <p className="err" style={{ marginTop: 12 }}>
-              <Icon name="alert" /> {state.message}
+            {/* Payment — split across one or more methods, summing to the total (MP-23) */}
+            <div className="overline text-faint" style={{ margin: "4px 0 8px" }}>
+              Payment
+            </div>
+            <div className="pay-methods">
+              {PAYMENT_METHODS.map((method) => {
+                const active = methods.includes(method);
+                return (
+                  <button
+                    key={method}
+                    type="button"
+                    className={"pill" + (active ? " active" : "")}
+                    aria-pressed={active}
+                    onClick={() => toggleMethod(method)}
+                  >
+                    {METHOD_LABEL[method]}
+                  </button>
+                );
+              })}
+            </div>
+
+            {methods.map((method) => (
+              <div key={method}>
+                <div className="pay-row">
+                  <label htmlFor={`pay-${method}`}>{METHOD_LABEL[method]}</label>
+                  <input
+                    id={`pay-${method}`}
+                    className="input tnum"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={sole ? soleAmount : amounts[method] ?? ""}
+                    readOnly={sole}
+                    aria-readonly={sole}
+                    onChange={(e) => setAmounts((prev) => ({ ...prev, [method]: e.target.value }))}
+                  />
+                </div>
+                {method === "cash" && (
+                  <>
+                    <div className="pay-row">
+                      <label htmlFor="tendered">Tendered</label>
+                      <input
+                        id="tendered"
+                        name="tendered"
+                        className="input tnum"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={tendered}
+                        onChange={(e) => setTendered(e.target.value)}
+                      />
+                    </div>
+                    <div className="remaining" style={{ paddingTop: 0 }}>
+                      <span className="text-muted">Change due</span>
+                      <span className="num body-med" style={{ color: change > 0 ? "var(--success)" : undefined }}>
+                        {format(change)}
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+
+            <div className="remaining">
+              <span className="text-muted">{remainingLabel}</span>
+              <span className="num body-med" aria-live="polite" style={{ color: remainingColor }}>
+                {format(remaining < 0 ? -remaining : remaining)}
+              </span>
+            </div>
+
+          </fieldset>
+
+          {errorMessage && (
+            <p className="err" role="alert" style={{ marginTop: 12 }}>
+              <Icon name="alert" /> {errorMessage}
             </p>
           )}
 
-          <button
-            type="submit"
-            className="btn btn-primary btn-block btn-lg mt-8"
-            disabled={!canComplete || pending}
-          >
-            {pending ? "Completing…" : "Complete sale"}
-          </button>
-          {cart.size > 0 && total > 0 && remaining !== 0 && (
+          {sale.status === "stalled" ? (
+            <>
+              <p className="notice" role="status" style={{ marginTop: 12 }}>
+                <Icon name="alert" /> Still sending — the connection is slow. Tap Retry; this sale
+                won’t be recorded twice.
+              </p>
+              <button type="button" className="btn btn-primary btn-block btn-lg mt-8" onClick={retry}>
+                Retry
+              </button>
+            </>
+          ) : (
+            <button
+              type="submit"
+              className="btn btn-primary btn-block btn-lg mt-8"
+              disabled={!canComplete || locked}
+            >
+              {buttonLabel}
+            </button>
+          )}
+          {!locked && cart.size > 0 && total > 0 && remaining !== 0 && (
             <p className="caption text-faint" style={{ marginTop: 8, textAlign: "center" }}>
               {remaining > 0
                 ? `Add ${format(remaining)} more to balance the payment.`
