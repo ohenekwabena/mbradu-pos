@@ -48,7 +48,7 @@ export default async function SellPage() {
 
   const [{ data: shopRow }, { data: stockRows }, { data: itemRows }, { data: settings }] =
     await Promise.all([
-      supabase.from("shops").select("name").eq("id", shopId).maybeSingle(),
+      supabase.from("shops").select("name, address, phone").eq("id", shopId).maybeSingle(),
       supabase.from("shop_stock").select("item_id, quantity").eq("shop_id", shopId),
       supabase
         .from("items_catalog")
@@ -82,6 +82,12 @@ export default async function SellPage() {
     <SellView
       shopId={shopId}
       shopName={(shopRow?.name as string | undefined) ?? "this shop"}
+      receiptShop={{
+        name: (shopRow?.name as string | undefined) ?? "Shop",
+        address: (shopRow?.address as string | null | undefined) ?? null,
+        phone: (shopRow?.phone as string | null | undefined) ?? null,
+      }}
+      sellerName={profile.fullName}
       items={items}
       lowThreshold={lowThreshold}
     />

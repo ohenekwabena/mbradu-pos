@@ -1,9 +1,10 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { Icon } from "@/components/icon";
+import { Receipt, type ReceiptData } from "@/components/receipt";
 import { type Category } from "@/lib/catalog";
 import { format, tryParse } from "@/lib/money";
 import {
@@ -58,6 +59,8 @@ interface CartLine {
  * exact same Sale under the same id. */
 interface Checkout extends SaleWrite {
   saleId: string;
+  /** What the cashier saw per line, for the inline receipt. */
+  display: { itemId: string; name: string; quantity: number; unitPrice: number }[];
 }
 
 /** One attempt: call `complete_sale` straight from the phone (no server hop),
@@ -76,11 +79,47 @@ async function attemptSale(checkout: Checkout): Promise<AttemptResult> {
   return error ? { ok: false, error } : { ok: true, saleId: data as string };
 }
 
-/** Where a confirmed Sale goes: its receipt, carrying the cash tendered (not
- * persisted) for the change line when cash was taken. */
+/** The permanent receipt page, carrying the cash tendered (not persisted) for
+ * the change line when cash was taken. */
 function receiptHref(saleId: string, checkout: Checkout): string {
   const hasCash = checkout.payments.some((payment) => payment.method === "cash");
   return hasCash ? `/sales/${saleId}?tendered=${checkout.tendered}` : `/sales/${saleId}`;
+}
+
+/** The inline receipt for a confirmed checkout. `complete_sale` only confirms a
+ * Sale whose server total equals what the cashier was shown (price_changed
+ * otherwise), so the displayed lines are the Sale's lines. */
+function receiptFor(
+  checkout: Checkout,
+  shop: ReceiptData["shop"],
+  sellerName: string | null,
+  createdAt: Date,
+): ReceiptData {
+  const hasCash = checkout.payments.some((payment) => payment.method === "cash");
+  return {
+    shop,
+    createdAt,
+    sellerName,
+    customerName: checkout.customer,
+    lines: checkout.display.map((line) => ({ ...line, key: line.itemId })),
+    total: checkout.total,
+    payments: checkout.payments.map((payment) => ({
+      key: payment.method,
+      method: payment.method,
+      amount: payment.amount_pesewas,
+    })),
+    change: hasCash ? checkout.change : null,
+  };
+}
+
+/** Take a confirmed Sale's quantities off the screen's own stock figures, so the
+ * catalogue stays right without reloading it. */
+export function deductSold(items: readonly SellItem[], sold: readonly { item_id: string; quantity: number }[]): SellItem[] {
+  const byId = new Map<string, number>();
+  for (const line of sold) byId.set(line.item_id, (byId.get(line.item_id) ?? 0) + line.quantity);
+  return items.map((item) =>
+    byId.has(item.id) ? { ...item, stock: Math.max(0, item.stock - (byId.get(item.id) as number)) } : item,
+  );
 }
 
 /** Render integer pesewas as a plain decimal (no symbol, no grouping) for an
@@ -119,18 +158,30 @@ function stockLabel(stock: number): string {
  * Sale id (idempotent, so never booked twice), a business rejection unlocks the
  * cart with a plain-English message, and if retries run out the cashier gets
  * *Still sending… Retry*. Only one pending Sale exists at a time.
+ *
+ * A confirmed Sale shows its receipt **in place** (#29) — no navigation — and
+ * *New sale* starts the next checkout with no network request. The catalogue is
+ * loaded once per visit; sold quantities come off the screen's own stock.
  */
 export function SellView({
   shopId,
   shopName,
+  receiptShop,
+  sellerName,
   items,
   lowThreshold,
 }: {
   shopId: string;
   shopName: string;
+  receiptShop: ReceiptData["shop"];
+  sellerName: string | null;
   items: SellItem[];
   lowThreshold: number;
 }) {
+  // The screen's own copy of the catalogue: loaded once, then kept current
+  // locally (sold quantities deducted) across Sale after Sale.
+  const [catalog, setCatalog] = useState(items);
+  const [receipt, setReceipt] = useState<{ data: ReceiptData; href: string } | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<CategoryFilter>("all");
   const [view, setView] = useState<"grid" | "list">("grid");
@@ -139,7 +190,6 @@ export function SellView({
   const [methods, setMethods] = useState<PaymentMethod[]>(["cash"]);
   const [amounts, setAmounts] = useState<Partial<Record<PaymentMethod, string>>>({});
   const [tendered, setTendered] = useState("");
-  const router = useRouter();
   const [sale, dispatch] = useReducer(pendingSaleReducer, IDLE);
   const [inputError, setInputError] = useState<string | null>(null);
   // The Sale's id: minted on the first Complete tap and kept across retries and
@@ -182,12 +232,12 @@ export function SellView({
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return items.filter(
+    return catalog.filter(
       (item) =>
         (filter === "all" || item.category === filter) &&
         (q === "" || item.name.toLowerCase().includes(q)),
     );
-  }, [items, query, filter]);
+  }, [catalog, query, filter]);
 
   const lines = [...cart.values()];
   const total = saleTotal(lines.map((line) => ({ unitPrice: line.item.price, quantity: line.qty })));
@@ -248,13 +298,18 @@ export function SellView({
     }
   }
 
-  const itemName = (id: string) => items.find((item) => item.id === id)?.name;
+  const itemName = (id: string) => catalog.find((item) => item.id === id)?.name;
 
   /** Send the frozen checkout until it resolves; navigate on a confirmed Sale. */
   async function send(checkout: Checkout) {
     const final = await sendWithRetry(() => attemptSale(checkout), dispatch);
     if (final.type === "completed") {
-      router.push(receiptHref(final.saleId, checkout));
+      setReceipt({
+        data: receiptFor(checkout, receiptShop, sellerName, new Date()),
+        href: receiptHref(final.saleId, checkout),
+      });
+      setCatalog((prev) => deductSold(prev, checkout.lines));
+      setCartOpen(false);
     } else if (final.type === "rejected" && final.error.code === "sale_id_conflict") {
       saleIdRef.current = null; // that id is unusable; the next attempt mints another
     }
@@ -281,9 +336,32 @@ export function SellView({
       return;
     }
     saleIdRef.current ??= crypto.randomUUID();
-    const checkout: Checkout = { ...parsed.value, saleId: saleIdRef.current };
+    const checkout: Checkout = {
+      ...parsed.value,
+      saleId: saleIdRef.current,
+      display: lines.map((line) => ({
+        itemId: line.item.id,
+        name: line.item.name,
+        quantity: line.qty,
+        unitPrice: line.item.price,
+      })),
+    };
     checkoutRef.current = checkout;
     void send(checkout);
+  }
+
+  /** Clear the receipt and start a fresh checkout — no network request. */
+  function startNewSale() {
+    setReceipt(null);
+    setCart(new Map());
+    setCustomer("");
+    setMethods(["cash"]);
+    setAmounts({});
+    setTendered("");
+    setInputError(null);
+    saleIdRef.current = null;
+    checkoutRef.current = null;
+    dispatch({ type: "reset" });
   }
 
   function retry() {
@@ -298,15 +376,32 @@ export function SellView({
       ? `Retrying… (${sale.attempt} of ${sale.of})`
       : sale.status === "waiting"
         ? "Connection slow — retrying…"
-        : sale.status === "completed"
-          ? "Sale recorded — opening receipt…"
-          : inFlight
+        : inFlight
             ? "Completing…"
             : "Complete sale";
 
   const remainingLabel = remaining > 0 ? "Remaining" : remaining < 0 ? "Over by" : "Balanced";
   const remainingColor =
     remaining > 0 ? "var(--warning-ink)" : remaining < 0 ? "var(--danger)" : "var(--success)";
+
+  if (receipt) {
+    return (
+      <div className="receipt-wrap">
+        <div className="receipt-actions no-print">
+          <button type="button" className="btn btn-primary" onClick={startNewSale} autoFocus>
+            New sale
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={() => window.print()}>
+            <Icon name="print" /> Print receipt
+          </button>
+          <Link className="btn btn-ghost" href={receipt.href}>
+            Open receipt
+          </Link>
+        </div>
+        <Receipt data={receipt.data} />
+      </div>
+    );
+  }
 
   return (
     <>
@@ -372,10 +467,10 @@ export function SellView({
                 <Icon name="box" />
               </div>
               <p className="body-med" style={{ margin: 0 }}>
-                {items.length === 0 ? `${shopName} carries no items yet` : "No items match these filters"}
+                {catalog.length === 0 ? `${shopName} carries no items yet` : "No items match these filters"}
               </p>
               <p className="caption" style={{ marginTop: 4 }}>
-                {items.length === 0
+                {catalog.length === 0
                   ? "Stock items into this shop from Inventory to start selling."
                   : "Try a different search or category."}
               </p>
