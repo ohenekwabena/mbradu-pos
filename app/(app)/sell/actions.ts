@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { assertCan } from "@/lib/auth/visibility";
 import { getCurrentProfile } from "@/lib/dal";
 import { parseSaleInput, type PaymentInput, type PaymentMethod, type SaleLineInput } from "@/lib/sale";
+import { parseSaleError, saleErrorMessage } from "@/lib/sale-errors";
 import { ALL_SHOPS } from "@/lib/shop-context";
 import { readShopScope } from "@/lib/shop-context-server";
 import { createClient } from "@/lib/supabase/server";
@@ -13,6 +14,8 @@ import { createClient } from "@/lib/supabase/server";
 export type SaleFormState =
   | { status: "idle" }
   | { status: "error"; message: string };
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** One cart line as the sell screen submits it (a JSON array in the form). */
 interface CartEntry {
@@ -33,6 +36,13 @@ interface CartEntry {
  * movement per line, and records each payment (one row per method), all in one
  * transaction. On success we redirect to the immutable receipt. Bound to the
  * sell form via `useActionState`.
+ *
+ * Idempotent (ADR-0008, #27): the sell screen generates the Sale's id once per
+ * checkout and resends it on every attempt, so a retry after a timeout returns
+ * the Sale already written instead of booking a second one. The total the
+ * cashier was shown rides along too; if prices changed since, nothing is written.
+ * Every RPC rejection is a stable code mapped to plain English — raw database
+ * text is never shown.
  */
 export async function completeSale(
   _prev: SaleFormState,
@@ -73,6 +83,17 @@ export async function completeSale(
     : [];
   if (cart.length === 0) {
     return { status: "error", message: "Add at least one item to the sale." };
+  }
+
+  // The checkout's client-generated Sale id (stable across retries) and the
+  // total the cashier was shown.
+  const saleId = String(formData.get("saleId") ?? "");
+  if (!UUID_RE.test(saleId)) {
+    return { status: "error", message: "Couldn’t read the sale — reload the page and try again." };
+  }
+  const expectedTotal = Number(formData.get("expectedTotal"));
+  if (!Number.isSafeInteger(expectedTotal) || expectedTotal < 0) {
+    return { status: "error", message: "Couldn’t read the total — reload the page and try again." };
   }
 
   // The payments: a JSON array of { method, amount } the sell screen serializes.
@@ -117,6 +138,18 @@ export async function completeSale(
     };
   });
 
+  const itemName = (id: string) => catalogById.get(id)?.name;
+
+  // A price changed since the screen loaded: don't charge a total the cashier
+  // wasn't shown (and don't let the payments check misreport it as a shortfall).
+  const serverTotal = lines.reduce((s, line) => s + line.unitPrice * line.quantity, 0);
+  if (lines.every((line) => catalogById.has(line.itemId)) && serverTotal !== expectedTotal) {
+    return {
+      status: "error",
+      message: saleErrorMessage({ code: "price_changed", total: serverTotal }, itemName),
+    };
+  }
+
   const parsed = parseSaleInput({
     shopId,
     customer: String(formData.get("customer") ?? ""),
@@ -128,14 +161,16 @@ export async function completeSale(
     return { status: "error", message: parsed.error };
   }
 
-  const { data: saleId, error } = await supabase.rpc("complete_sale", {
+  const { error } = await supabase.rpc("complete_sale", {
+    p_sale_id: saleId,
     p_shop_id: parsed.value.shopId,
     p_customer: parsed.value.customer ?? "",
     p_lines: parsed.value.lines,
     p_payments: parsed.value.payments,
+    p_expected_total: expectedTotal,
   });
   if (error) {
-    return { status: "error", message: error.message };
+    return { status: "error", message: saleErrorMessage(parseSaleError(error), itemName) };
   }
 
   // The sale changed this Shop's stock; the inventory views read it.

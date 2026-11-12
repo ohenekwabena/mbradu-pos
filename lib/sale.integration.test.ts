@@ -109,6 +109,8 @@ describe.skipIf(!ready)("complete_sale RPC (remote integration)", () => {
     if (shopId) await best(() => admin.from("shops").delete().eq("id", shopId));
   });
 
+  const newId = () => globalThis.crypto.randomUUID();
+
   async function stockQty(): Promise<number> {
     const { data } = await admin
       .from("shop_stock")
@@ -130,10 +132,12 @@ describe.skipIf(!ready)("complete_sale RPC (remote integration)", () => {
     expect(await stockQty()).toBe(START_QTY);
 
     const { data: saleId, error } = await cashier.rpc("complete_sale", {
+      p_sale_id: newId(),
       p_shop_id: shopId,
       p_customer: "ITEST Customer",
       p_lines: [{ item_id: itemId, quantity: 2 }],
       p_payments: [{ method: "cash", amount_pesewas: 2 * PRICE }],
+      p_expected_total: 2 * PRICE,
     });
     expect(error).toBeNull();
     expect(typeof saleId).toBe("string");
@@ -181,11 +185,14 @@ describe.skipIf(!ready)("complete_sale RPC (remote integration)", () => {
     const { error } = await cashier.rpc("complete_sale", {
       p_shop_id: shopId,
       p_customer: "",
+      p_sale_id: newId(),
       p_lines: [{ item_id: itemId, quantity: before + 100 }],
       p_payments: [{ method: "cash", amount_pesewas: (before + 100) * PRICE }],
+      p_expected_total: (before + 100) * PRICE,
     });
     expect(error).not.toBeNull();
-    expect(error!.message).toMatch(/insufficient stock/i);
+    expect(error!.message).toBe("insufficient_stock");
+    expect(JSON.parse(error!.details!)).toMatchObject({ item_id: itemId, available: before });
 
     // Nothing moved: stock unchanged and no Sale row written.
     expect(await stockQty()).toBe(before);
@@ -198,11 +205,13 @@ describe.skipIf(!ready)("complete_sale RPC (remote integration)", () => {
     const { error } = await cashier.rpc("complete_sale", {
       p_shop_id: shopId,
       p_customer: "",
+      p_sale_id: newId(),
       p_lines: [{ item_id: uncarriedItemId, quantity: 1 }],
       p_payments: [{ method: "cash", amount_pesewas: PRICE2 }],
+      p_expected_total: PRICE2,
     });
     expect(error).not.toBeNull();
-    expect(error!.message).toMatch(/not carried/i);
+    expect(error!.message).toBe("not_carried");
     expect(await salesCount()).toBe(salesBefore);
   });
 
@@ -212,11 +221,13 @@ describe.skipIf(!ready)("complete_sale RPC (remote integration)", () => {
     const { error } = await cashier.rpc("complete_sale", {
       p_shop_id: shopId,
       p_customer: "",
+      p_sale_id: newId(),
       p_lines: [{ item_id: itemId, quantity: 1 }],
       p_payments: [{ method: "cash", amount_pesewas: PRICE - 100 }],
+      p_expected_total: PRICE,
     });
     expect(error).not.toBeNull();
-    expect(error!.message).toMatch(/do not sum/i);
+    expect(error!.message).toBe("payment_mismatch");
     expect(await stockQty()).toBe(before);
   });
 
@@ -226,6 +237,8 @@ describe.skipIf(!ready)("complete_sale RPC (remote integration)", () => {
     const momoPart = PRICE - cashPart; // one unit at PRICE, settled part cash / part MoMo
 
     const { data: saleId, error } = await cashier.rpc("complete_sale", {
+      p_sale_id: newId(),
+      p_expected_total: PRICE,
       p_shop_id: shopId,
       p_customer: "ITEST Split",
       p_lines: [{ item_id: itemId, quantity: 1 }],
@@ -252,5 +265,70 @@ describe.skipIf(!ready)("complete_sale RPC (remote integration)", () => {
       { method: "cash", amount_pesewas: cashPart },
       { method: "momo", amount_pesewas: momoPart },
     ]);
+  });
+  it("is idempotent: replaying the same Sale id returns it and writes nothing more (ADR-0008)", async () => {
+    const before = await stockQty();
+    const salesBefore = await salesCount();
+    const id = newId();
+    const call = () =>
+      cashier.rpc("complete_sale", {
+        p_sale_id: id,
+        p_shop_id: shopId,
+        p_customer: "ITEST Replay",
+        p_lines: [{ item_id: itemId, quantity: 1 }],
+        p_payments: [{ method: "cash", amount_pesewas: PRICE }],
+        p_expected_total: PRICE,
+      });
+
+    // A timed-out first attempt followed by a retry — and a racing pair.
+    const first = await call();
+    const [second, third] = await Promise.all([call(), call()]);
+    for (const res of [first, second, third]) {
+      expect(res.error).toBeNull();
+      expect(res.data).toBe(id);
+    }
+
+    // Exactly one Sale, one decrement, one movement, one payment.
+    expect(await salesCount()).toBe(salesBefore + 1);
+    expect(await stockQty()).toBe(before - 1);
+    const { data: movements } = await admin.from("stock_movements").select("amount").eq("sale_id", id);
+    expect(movements).toEqual([{ amount: -1 }]);
+    const { data: payments } = await admin.from("payments").select("amount_pesewas").eq("sale_id", id);
+    expect(payments).toEqual([{ amount_pesewas: PRICE }]);
+  });
+
+  it("rejects a Sale whose total the cashier wasn't shown (price_changed) and writes nothing", async () => {
+    const before = await stockQty();
+    const salesBefore = await salesCount();
+
+    const { error } = await cashier.rpc("complete_sale", {
+      p_sale_id: newId(),
+      p_shop_id: shopId,
+      p_customer: "",
+      p_lines: [{ item_id: itemId, quantity: 1 }],
+      p_payments: [{ method: "cash", amount_pesewas: PRICE - 1_000 }],
+      p_expected_total: PRICE - 1_000, // the stale price on the phone
+    });
+    expect(error).not.toBeNull();
+    expect(error!.message).toBe("price_changed");
+    expect(JSON.parse(error!.details!)).toMatchObject({
+      total_pesewas: PRICE,
+      prices: [{ item_id: itemId, price_pesewas: PRICE }],
+    });
+    expect(await stockQty()).toBe(before);
+    expect(await salesCount()).toBe(salesBefore);
+  });
+
+  it("raises stable codes for an empty cart and a bad quantity", async () => {
+    const base = { p_shop_id: shopId, p_customer: "", p_payments: [{ method: "cash", amount_pesewas: PRICE }] };
+    const empty = await cashier.rpc("complete_sale", { ...base, p_sale_id: newId(), p_lines: [], p_expected_total: 0 });
+    expect(empty.error!.message).toBe("empty_sale");
+    const zero = await cashier.rpc("complete_sale", {
+      ...base,
+      p_sale_id: newId(),
+      p_lines: [{ item_id: itemId, quantity: 0 }],
+      p_expected_total: 0,
+    });
+    expect(zero.error!.message).toBe("invalid_quantity");
   });
 });
