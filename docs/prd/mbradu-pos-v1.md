@@ -136,6 +136,6 @@ Multi-Shop **is now in scope** (ADR-0005), but these multi-Shop refinements are 
 ## Further Notes
 
 - Production email OTP needs a custom SMTP provider (e.g. Resend) wired into Supabase before go-live.
-- Assumes **online-only** operation with reliable connectivity at the counter; hosting assumed to be Vercel + Supabase cloud.
+- Assumes **online-only** operation. ~~Reliable connectivity at the counter~~ did not hold (cashiers sell on mobile data) — selling must tolerate a slow, flaky connection; see ADR-0008; hosting assumed to be Vercel + Supabase cloud.
 - **Needs confirmation at triage** (not explicitly decided during grilling): staff revoke/deactivation (story 5 implies management) and Item archiving/discontinuation. Included as plausible needs; cut or split as triage sees fit.
 - Published to Jira as Epic [MP-13](https://nibbies.atlassian.net/browse/MP-13) (project MP, `nibbies.atlassian.net`) on 2026-06-04; git remote `origin` → `github.com/ohenekwabena/mbradu-pos`.
