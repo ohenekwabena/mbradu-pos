@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon } from "@/components/icon";
 import { type Category } from "@/lib/catalog";
@@ -88,6 +88,13 @@ export function SellView({
   const [amounts, setAmounts] = useState<Partial<Record<PaymentMethod, string>>>({});
   const [tendered, setTendered] = useState("");
   const [state, formAction, pending] = useActionState(completeSale, INITIAL);
+  // The Sale's id: minted on the first Complete tap and resent on every retry, so
+  // a timed-out attempt that actually landed can never be booked twice
+  // (ADR-0008). Minted client-side at submit (not during render) so server and
+  // client markup agree. A completed Sale navigates to its receipt, unmounting
+  // this screen, so the next checkout starts with a fresh id.
+  const saleIdRef = useRef<string | null>(null);
+  const saleIdInput = useRef<HTMLInputElement>(null);
   // On narrow screens the cart is a bottom sheet (see .cart-fab / .cart-open in
   // globals.css); on wider screens it's the always-open sticky sidebar and this
   // flag is inert.
@@ -317,9 +324,17 @@ export function SellView({
         </section>
 
         {/* Current sale — the cart is the form that completes the sale */}
-        <form action={formAction} className={"card cart" + (cartOpen ? " cart-open" : "")}>
+        <form
+          action={formAction}
+          onSubmit={() => {
+            saleIdRef.current ??= crypto.randomUUID();
+            if (saleIdInput.current) saleIdInput.current.value = saleIdRef.current;
+          }}
+          className={"card cart" + (cartOpen ? " cart-open" : "")}>
           <input type="hidden" name="cart" value={cartPayload} />
           <input type="hidden" name="payments" value={paymentsPayload} />
+          <input type="hidden" name="saleId" ref={saleIdInput} />
+          <input type="hidden" name="expectedTotal" value={total} />
 
           {/* Bottom-sheet grab handle — desktop-hidden (sidebar needs no handle) */}
           <div className="sheet-handle" aria-hidden="true" />

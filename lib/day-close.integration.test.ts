@@ -166,10 +166,12 @@ describe.skipIf(!ready)("record_day_close RPC (remote integration)", () => {
   /** Ring a Sale at the seeded Shop as the Cashier. */
   async function ringSale(quantity: number, payments: { method: string; amount_pesewas: number }[]) {
     return cashier.rpc("complete_sale", {
+      p_sale_id: globalThis.crypto.randomUUID(),
       p_shop_id: shopId,
       p_customer: "",
       p_lines: [{ item_id: itemId, quantity }],
       p_payments: payments,
+      p_expected_total: payments.reduce((s, p) => s + p.amount_pesewas, 0),
     });
   }
 
