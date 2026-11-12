@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { Icon } from "@/components/icon";
 import { Receipt, type ReceiptData } from "@/components/receipt";
@@ -27,6 +27,7 @@ import {
   type SaleWrite,
 } from "@/lib/sale";
 import { saleErrorMessage } from "@/lib/sale-errors";
+import { applyStock, clampCartLine, deductSold, setAvailable } from "@/lib/sell-stock";
 import { createClient } from "@/lib/supabase/client";
 
 /** One sellable Item at the current Shop: the catalog facts plus the live on-hand
@@ -113,15 +114,8 @@ function receiptFor(
   };
 }
 
-/** Take a confirmed Sale's quantities off the screen's own stock figures, so the
- * catalogue stays right without reloading it. */
-export function deductSold(items: readonly SellItem[], sold: readonly { item_id: string; quantity: number }[]): SellItem[] {
-  const byId = new Map<string, number>();
-  for (const line of sold) byId.set(line.item_id, (byId.get(line.item_id) ?? 0) + line.quantity);
-  return items.map((item) =>
-    byId.has(item.id) ? { ...item, stock: Math.max(0, item.stock - (byId.get(item.id) as number)) } : item,
-  );
-}
+/** How often the screen quietly re-reads this Shop's stock while visible (#31). */
+export const STOCK_REFRESH_MS = 150_000;
 
 /** Render integer pesewas as a plain decimal (no symbol, no grouping) for an
  * amount input — round-trips through {@link tryParse} exactly. */
@@ -206,6 +200,49 @@ export function SellView({
   const checkoutRef = useRef<Checkout | null>(null);
   const locked = isLocked(sale);
   const inFlight = isInFlight(sale);
+
+  // Background stock refresh (#31). With one cashier per Shop, the screen's
+  // stock only goes stale when the Owner restocks, corrects, approves a Stock
+  // take or sells here — e.g. an Item restocked from 0 would still read "Out of
+  // stock". So re-read just this Shop's quantities on a timer and when the tab
+  // comes back into view. Never while a Sale is pending (its own deduction would
+  // be double-counted), and a refresh that straddles a confirmed Sale is
+  // discarded (stockEpoch). Failures are silent — it's a hint, the RPC decides.
+  const lockedRef = useRef(locked);
+  const stockEpoch = useRef(0);
+  useEffect(() => {
+    lockedRef.current = locked;
+  }, [locked]);
+
+  const refreshStock = useCallback(
+    async (force = false) => {
+      if (!force && (document.visibilityState !== "visible" || lockedRef.current)) return;
+      const epoch = stockEpoch.current;
+      try {
+        const { data, error } = await createClient()
+          .from("shop_stock")
+          .select("item_id, quantity")
+          .eq("shop_id", shopId);
+        if (error || !data || epoch !== stockEpoch.current || (!force && lockedRef.current)) return;
+        setCatalog((prev) => applyStock(prev, data as { item_id: string; quantity: number }[]));
+      } catch {
+        // Silent: the next tick (or the server, at checkout) will set it right.
+      }
+    },
+    [shopId],
+  );
+
+  useEffect(() => {
+    const timer = setInterval(() => void refreshStock(), STOCK_REFRESH_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshStock();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [refreshStock]);
   // On narrow screens the cart is a bottom sheet (see .cart-fab / .cart-open in
   // globals.css); on wider screens it's the always-open sticky sidebar and this
   // flag is inert.
@@ -312,10 +349,23 @@ export function SellView({
         data: receiptFor(checkout, receiptShop, sellerName, new Date()),
         href: receiptHref(final.saleId, checkout),
       });
+      stockEpoch.current += 1; // a refresh fetched before this Sale is now stale
       setCatalog((prev) => deductSold(prev, checkout.lines));
       setCartOpen(false);
     } else if (final.type === "rejected" && final.error.code === "sale_id_conflict") {
       saleIdRef.current = null; // that id is unusable; the next attempt mints another
+    } else if (
+      final.type === "rejected" &&
+      final.error.code === "insufficient_stock" &&
+      final.error.itemId &&
+      final.error.available !== undefined
+    ) {
+      // Someone else sold or corrected it meanwhile: take the server's word for
+      // what's left, clamp the cart to it, and re-read the rest of the Shop.
+      const { itemId, available } = final.error;
+      setCatalog((prev) => setAvailable(prev, itemId, available));
+      setCart((prev) => clampCartLine(prev, itemId, available));
+      void refreshStock(true);
     } else if (final.type === "rejected" && final.error.code === "price_changed" && final.error.prices) {
       // Nothing was written. Adopt the server's prices on screen (catalogue and
       // cart) and ask the cashier to confirm the new total before resending.

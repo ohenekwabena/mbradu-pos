@@ -4,11 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { format } from "@/lib/money";
 
-import { deductSold, SellView, type SellItem } from "./sell-view";
+import { SellView, STOCK_REFRESH_MS, type SellItem } from "./sell-view";
 
 type RpcResult = { data: unknown; error: { message: string; details?: string } | null };
 const rpc = vi.fn<(fn: string, args: Record<string, unknown>) => { abortSignal: () => Promise<RpcResult> }>();
-vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc }) }));
+// The stock refresh reads `from("shop_stock").select(...).eq("shop_id", …)`.
+type StockRows = { item_id: string; quantity: number }[];
+let stockRows: StockRows = [];
+const stockRead = vi.fn(() => Promise.resolve({ data: stockRows, error: null }));
+const from = vi.fn(() => ({ select: () => ({ eq: stockRead }) }));
+vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc, from }) }));
 
 /** Script the RPC's answers, one per call (the last repeats). */
 function answers(...results: RpcResult[]) {
@@ -42,6 +47,9 @@ const sentSaleIds = () => rpc.mock.calls.map(([, args]) => args.p_sale_id);
 
 beforeEach(() => {
   rpc.mockReset();
+  stockRead.mockClear();
+  from.mockClear();
+  stockRows = [];
   vi.useFakeTimers();
 });
 afterEach(() => {
@@ -88,13 +96,13 @@ describe("SellView — sending a Sale on a flaky connection", () => {
   it("stops on a business rejection, explains it, and unlocks the cart (same id kept)", async () => {
     answers({
       data: null,
-      error: { message: "insufficient_stock", details: JSON.stringify({ item_id: WIG.id, available: 0 }) },
+      error: { message: "not_carried", details: JSON.stringify({ item_id: WIG.id }) },
     });
     setup();
     await act(async () => fireEvent.click(completeButton()));
 
     expect(rpc).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("alert")).toHaveTextContent(`“${WIG.name}” is out of stock at this shop`);
+    expect(screen.getByRole("alert")).toHaveTextContent(`“${WIG.name}” isn’t stocked at this shop`);
     expect(screen.getByRole("button", { name: `Add ${WIG.name}` })).not.toBeDisabled();
 
     answers({ data: "sale-2", error: null });
@@ -152,18 +160,6 @@ describe("SellView — inline receipt and the next Sale (#29)", () => {
     fireEvent.click(screen.getByRole("button", { name: "New sale" }));
     expect(screen.getByText("Out of stock")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: `Add ${WIG.name}` })).toBeDisabled();
-  });
-});
-
-describe("deductSold", () => {
-  it("takes sold quantities off matching Items, merging duplicates and flooring at 0", () => {
-    const items: SellItem[] = [WIG, { ...WIG, id: "other", stock: 4 }];
-    expect(
-      deductSold(items, [
-        { item_id: WIG.id, quantity: 1 },
-        { item_id: WIG.id, quantity: 5 },
-      ]).map((i) => i.stock),
-    ).toEqual([0, 4]);
   });
 });
 
@@ -229,5 +225,97 @@ describe("SellView — confirming a changed price (#30)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Adjust payments" }));
     expect(rpc).toHaveBeenCalledTimes(1);
     expect(completeButton()).toBeDisabled(); // GH₵450 no longer balances GH₵500
+  });
+});
+
+describe("SellView — background stock refresh and clamping (#31)", () => {
+  const SOLD_OUT: SellItem = { ...WIG, stock: 0 };
+  function renderWith(items: SellItem[]) {
+    render(
+      <SellView shopId="shop-1" shopName="Osu" receiptShop={{ name: "Osu" }} sellerName={null} items={items} lowThreshold={0} />,
+    );
+  }
+
+  it("picks up an Owner restock on the timer: out of stock becomes sellable", async () => {
+    stockRows = [{ item_id: WIG.id, quantity: 5 }];
+    renderWith([SOLD_OUT]);
+    expect(screen.getByText("Out of stock")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `Add ${WIG.name}` })).toBeDisabled();
+
+    await act(async () => vi.advanceTimersByTimeAsync(STOCK_REFRESH_MS));
+    expect(from).toHaveBeenCalledWith("shop_stock");
+    expect(stockRead).toHaveBeenCalledWith("shop_id", "shop-1");
+    expect(screen.getByText("5 left")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `Add ${WIG.name}` })).not.toBeDisabled();
+  });
+
+  it("is paused while the tab is hidden and refreshes when it comes back", async () => {
+    stockRows = [{ item_id: WIG.id, quantity: 5 }];
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    renderWith([SOLD_OUT]);
+    await act(async () => vi.advanceTimersByTimeAsync(STOCK_REFRESH_MS * 2));
+    expect(stockRead).not.toHaveBeenCalled();
+
+    visibility.mockReturnValue("visible");
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(stockRead).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("5 left")).toBeInTheDocument();
+    visibility.mockRestore();
+  });
+
+  it("doesn't refresh while a Sale is pending, and a failed refresh is silent", async () => {
+    rpc.mockImplementation(() => ({ abortSignal: () => new Promise<RpcResult>(() => {}) })); // never answers
+    renderWith([WIG]);
+    addWig();
+    await act(async () => fireEvent.click(completeButton()));
+    await act(async () => vi.advanceTimersByTimeAsync(STOCK_REFRESH_MS));
+    expect(stockRead).not.toHaveBeenCalled();
+    cleanup();
+
+    stockRead.mockImplementationOnce(() => Promise.reject(new Error("offline")));
+    renderWith([WIG]);
+    addWig();
+    await act(async () => vi.advanceTimersByTimeAsync(STOCK_REFRESH_MS));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getAllByText(WIG.name).length).toBeGreaterThan(1); // still in the cart
+  });
+
+  it("insufficient_stock clamps the cart to what's left, says so, and re-reads the Shop", async () => {
+    stockRows = [{ item_id: WIG.id, quantity: 1 }];
+    answers({
+      data: null,
+      error: { message: "insufficient_stock", details: JSON.stringify({ item_id: WIG.id, available: 1 }) },
+    });
+    renderWith([WIG]);
+    addWig();
+    addWig(); // 2 in the cart; the server says only 1 is left
+    await act(async () => fireEvent.click(completeButton()));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(`Only 1 of “${WIG.name}” left at this shop — the cart has been updated`);
+    expect(screen.getByText("1 left")).toBeInTheDocument();
+    expect(document.querySelector(".stepper .val")).toHaveTextContent("1");
+    expect(stockRead).toHaveBeenCalledTimes(1);
+
+    // The clamped cart completes under the same Sale id.
+    answers({ data: "sale-3", error: null });
+    await act(async () => fireEvent.click(completeButton()));
+    const [, retried] = rpc.mock.calls[1];
+    expect(retried).toMatchObject({ p_lines: [{ item_id: WIG.id, quantity: 1 }], p_expected_total: 45_000 });
+    expect(retried.p_sale_id).toBe(rpc.mock.calls[0][1].p_sale_id);
+  });
+
+  it("drops a line that has sold out entirely", async () => {
+    answers({
+      data: null,
+      error: { message: "insufficient_stock", details: JSON.stringify({ item_id: WIG.id, available: 0 }) },
+    });
+    renderWith([WIG]);
+    addWig();
+    await act(async () => fireEvent.click(completeButton()));
+    expect(screen.getByRole("alert")).toHaveTextContent(/out of stock at this shop — it’s been taken out of the cart/);
+    expect(screen.getByText("Search to add items to the sale.")).toBeInTheDocument();
+    expect(screen.getByText("Out of stock")).toBeInTheDocument();
   });
 });
