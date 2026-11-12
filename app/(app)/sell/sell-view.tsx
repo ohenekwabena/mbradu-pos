@@ -7,6 +7,7 @@ import { Icon } from "@/components/icon";
 import { Receipt, type ReceiptData } from "@/components/receipt";
 import { type Category } from "@/lib/catalog";
 import { format, tryParse } from "@/lib/money";
+import { applyPrices, priceChange, type PriceChange } from "@/lib/price-change";
 import {
   ATTEMPT_TIMEOUT_MS,
   IDLE,
@@ -182,6 +183,9 @@ export function SellView({
   // locally (sold quantities deducted) across Sale after Sale.
   const [catalog, setCatalog] = useState(items);
   const [receipt, setReceipt] = useState<{ data: ReceiptData; href: string } | null>(null);
+  // Prices moved since this screen loaded: what changed, awaiting the cashier's
+  // confirmation before the Sale can be resent (#30).
+  const [priceDialog, setPriceDialog] = useState<PriceChange | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<CategoryFilter>("all");
   const [view, setView] = useState<"grid" | "list">("grid");
@@ -312,7 +316,26 @@ export function SellView({
       setCartOpen(false);
     } else if (final.type === "rejected" && final.error.code === "sale_id_conflict") {
       saleIdRef.current = null; // that id is unusable; the next attempt mints another
+    } else if (final.type === "rejected" && final.error.code === "price_changed" && final.error.prices) {
+      // Nothing was written. Adopt the server's prices on screen (catalogue and
+      // cart) and ask the cashier to confirm the new total before resending.
+      const current = final.error.prices;
+      setCatalog((prev) => applyPrices(prev, current));
+      setCart((prev) => {
+        const next = new Map(prev);
+        for (const [id, line] of prev) next.set(id, { ...line, item: applyPrices([line.item], current)[0] });
+        return next;
+      });
+      setPriceDialog(priceChange(checkout.display, current));
     }
+  }
+
+  /** Confirm the new prices. One payment method follows the total by itself, so
+   * the Sale is resent straight away (same Sale id, new expected total); a split
+   * goes back to the cart for the cashier to rebalance. */
+  function confirmNewPrices() {
+    setPriceDialog(null);
+    if (methods.length === 1) complete();
   }
 
   function complete() {
@@ -369,8 +392,9 @@ export function SellView({
     void send(checkoutRef.current);
   }
 
-  const errorMessage =
-    inputError ?? (sale.status === "rejected" ? saleErrorMessage(sale.error, itemName) : null);
+  const errorMessage = priceDialog
+    ? null
+    : inputError ?? (sale.status === "rejected" ? saleErrorMessage(sale.error, itemName) : null);
   const buttonLabel =
     sale.status === "sending" && sale.attempt > 1
       ? `Retrying… (${sale.attempt} of ${sale.of})`
@@ -718,6 +742,15 @@ export function SellView({
         </form>
       </div>
 
+      {priceDialog && (
+        <PriceChangeDialog
+          change={priceDialog}
+          split={methods.length > 1}
+          onConfirm={confirmNewPrices}
+          onCancel={() => setPriceDialog(null)}
+        />
+      )}
+
       {/* Mobile only (CSS-gated): dim the page behind the cart sheet. */}
       {cartOpen && (
         <div className="cart-scrim" aria-hidden="true" onClick={() => setCartOpen(false)} />
@@ -743,5 +776,81 @@ export function SellView({
         </button>
       )}
     </>
+  );
+}
+
+/**
+ * Prices changed since the screen loaded (#30): each moved line (old → new) and
+ * the new total. Confirming resends at the new total (or, for a split payment,
+ * returns to the cart to rebalance); cancelling returns to the cart, which
+ * already shows the new prices. Nothing is written until the cashier confirms.
+ */
+function PriceChangeDialog({
+  change,
+  split,
+  onConfirm,
+  onCancel,
+}: {
+  change: PriceChange;
+  split: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  return (
+    <div
+      className="scrim"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Prices changed">
+        <div className="m-head">
+          <h3 className="h3">Prices changed</h3>
+          <button type="button" className="icon-btn" aria-label="Close" onClick={onCancel}>
+            <Icon name="x" />
+          </button>
+        </div>
+        <div className="m-body">
+          <p style={{ margin: "0 0 12px" }}>
+            The Owner changed {change.changed.length === 1 ? "a price" : "some prices"} since this screen
+            loaded. Nothing has been charged yet.
+          </p>
+          {change.changed.map((line) => (
+            <div key={line.itemId} className="r-line">
+              <div className="qn">
+                <div className="nm">{line.name}</div>
+                <div className="up tnum">
+                  {line.quantity} × <s>{format(line.oldPrice)}</s> → {format(line.newPrice)}
+                </div>
+              </div>
+            </div>
+          ))}
+          <div className="r-total">
+            <span className="body-med">New total</span>
+            <span className="tv">{format(change.newTotal)}</span>
+          </div>
+          <p className="caption text-faint" style={{ marginTop: 6 }}>
+            Was {format(change.oldTotal)}.
+            {split ? " The payment is split — adjust the amounts to the new total, then complete." : ""}
+          </p>
+        </div>
+        <div className="m-actions">
+          <button type="button" className="btn btn-secondary" onClick={onCancel}>
+            Back to cart
+          </button>
+          <button type="button" className="btn btn-primary" onClick={onConfirm} autoFocus>
+            {split ? "Adjust payments" : `Charge ${format(change.newTotal)}`}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

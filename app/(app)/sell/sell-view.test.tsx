@@ -166,3 +166,68 @@ describe("deductSold", () => {
     ).toEqual([0, 4]);
   });
 });
+
+describe("SellView — confirming a changed price (#30)", () => {
+  const priceChanged: RpcResult = {
+    data: null,
+    error: {
+      message: "price_changed",
+      details: JSON.stringify({
+        total_pesewas: 50_000,
+        expected_pesewas: 45_000,
+        prices: [{ item_id: WIG.id, price_pesewas: 50_000 }],
+      }),
+    },
+  };
+
+  it("shows old → new and the new total; confirming resends the same Sale at the new total", async () => {
+    answers(priceChanged);
+    setup();
+    await act(async () => fireEvent.click(completeButton()));
+
+    const dialog = screen.getByRole("dialog", { name: "Prices changed" });
+    expect(within(dialog).getByText(WIG.name)).toBeInTheDocument();
+    expect(within(dialog).getByText(format(45_000))).toBeInTheDocument(); // old, struck through
+    expect(within(dialog).getAllByText(format(50_000)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("alert")).toBeNull(); // the dialog explains it
+
+    answers({ data: "sale-7", error: null });
+    await act(async () =>
+      fireEvent.click(within(dialog).getByRole("button", { name: `Charge ${format(50_000)}` })),
+    );
+    expect(rpc).toHaveBeenCalledTimes(2);
+    const [, first] = rpc.mock.calls[0];
+    const [, second] = rpc.mock.calls[1];
+    expect(second.p_sale_id).toBe(first.p_sale_id);
+    expect(second).toMatchObject({
+      p_expected_total: 50_000,
+      p_payments: [{ method: "cash", amount_pesewas: 50_000 }],
+    });
+    expect(document.querySelector(".receipt")).not.toBeNull();
+  });
+
+  it("Back to cart writes nothing and leaves the new price on screen", async () => {
+    answers(priceChanged);
+    setup();
+    await act(async () => fireEvent.click(completeButton()));
+    fireEvent.click(screen.getByRole("button", { name: "Back to cart" }));
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(`${format(50_000)} ea`)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/total is now/);
+  });
+
+  it("a split payment goes back to the cart to rebalance instead of resending", async () => {
+    answers(priceChanged);
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "MoMo" }));
+    fireEvent.change(screen.getByLabelText("Cash"), { target: { value: "200" } });
+    fireEvent.change(screen.getByLabelText("MoMo"), { target: { value: "250" } });
+    await act(async () => fireEvent.click(completeButton()));
+
+    fireEvent.click(screen.getByRole("button", { name: "Adjust payments" }));
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(completeButton()).toBeDisabled(); // GH₵450 no longer balances GH₵500
+  });
+});
