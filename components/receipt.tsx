@@ -78,7 +78,10 @@ export function Receipt({ data }: { data: ReceiptData }) {
         <div key={line.key} className="r-line">
           <div className="qn">
             <div className="nm">{line.name}</div>
-            <div className="up tnum">
+            {/* At quantity 1 the unit price just repeats the line total. The
+                screen keeps it (design — Receipt); print drops it via `.qty-one`,
+                saving a row of thermal paper per single-unit line. */}
+            <div className={"up tnum" + (line.quantity === 1 ? " qty-one" : "")}>
               {line.quantity} × {format(line.unitPrice)}
             </div>
           </div>
@@ -91,7 +94,7 @@ export function Receipt({ data }: { data: ReceiptData }) {
         <span className="tv">{format(total)}</span>
       </div>
 
-      <div style={{ marginTop: 10 }}>
+      <div className="r-pays">
         {payments.map((payment) => (
           <div key={payment.key} className="r-pay">
             <span className="text-muted">{METHOD_LABEL[payment.method] ?? payment.method}</span>

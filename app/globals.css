@@ -2602,6 +2602,9 @@ table.tbl tr:last-child td {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+.r-pays {
+  margin-top: 10px;
+}
 .r-pay {
   display: flex;
   justify-content: space-between;
@@ -2620,9 +2623,20 @@ table.tbl tr:last-child td {
   justify-content: center;
   margin: 0 0 24px;
 }
+/* Printing targets a narrow thermal roll (58mm is the common till width), so the
+   printed receipt is its own compact layout: full paper width (a 12mm page margin
+   each side used to leave ~34mm of a 58mm roll, wrapping every item name over
+   several lines) and tightened type, spacing, and rules throughout. */
 @media print {
+  @page {
+    /* `auto` = whatever roll width the printer driver reports; the gutter lives
+       on .receipt instead, so nothing is thrown away on page margins. */
+    size: auto;
+    margin: 0;
+  }
   body {
     background: #fff;
+    line-height: 1.25;
   }
   .sidebar,
   .topbar,
@@ -2636,15 +2650,84 @@ table.tbl tr:last-child td {
   .content {
     padding: 0;
   }
+  .receipt-wrap {
+    max-width: none;
+    margin: 0;
+  }
   .receipt {
     border: none;
     box-shadow: none;
-    max-width: 320px;
-    padding: 0;
-    margin: 0 auto;
+    background: #fff;
+    width: auto;
+    max-width: none;
+    padding: 2mm 3mm 0;
+    margin: 0;
   }
-  @page {
-    margin: 12mm;
+  .r-head {
+    margin-bottom: 6px;
+  }
+  .r-mark {
+    width: 34px;
+    height: 34px;
+    margin: 0 auto 4px;
+  }
+  .receipt .h3 {
+    font-size: 13px;
+    line-height: 16px;
+  }
+  .r-shop {
+    font-size: 10px;
+    line-height: 13px;
+  }
+  .r-meta {
+    font-size: 10px;
+    line-height: 13px;
+    padding: 4px 0;
+    margin-bottom: 5px;
+  }
+  .r-line {
+    gap: 6px;
+    padding: 3px 0;
+  }
+  .r-line .nm {
+    font-size: 11px;
+    line-height: 14px;
+  }
+  .r-line .up {
+    font-size: 10px;
+    line-height: 13px;
+  }
+  /* A single-unit line's "1 x price" only repeats its line total. */
+  .r-line .up.qty-one {
+    display: none;
+  }
+  .r-line .lt {
+    font-size: 11px;
+    line-height: 14px;
+    min-width: 0;
+  }
+  .r-total {
+    padding: 5px 0 4px;
+    margin-top: 2px;
+  }
+  .r-total .body-med {
+    font-size: 12px;
+  }
+  .r-total .tv {
+    font-size: 15px;
+  }
+  .r-pays {
+    margin-top: 4px;
+  }
+  .r-pay {
+    font-size: 10px;
+    line-height: 13px;
+    padding: 1px 0;
+  }
+  .r-foot {
+    font-size: 9px;
+    line-height: 12px;
+    margin-top: 7px;
   }
 }
 
