@@ -66,7 +66,11 @@ export function LoginForm() {
           required
         />
       </div>
-      <div style={{ textAlign: "right", marginBottom: 20 }}>
+      <div className="auth-options">
+        <label className="remember-me">
+          <input type="checkbox" name="remember" defaultChecked />
+          Remember me for 30 days
+        </label>
         <Link className="link" href="/forgot-password">
           Forgot password?
         </Link>

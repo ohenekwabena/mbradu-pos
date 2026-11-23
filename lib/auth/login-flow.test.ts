@@ -7,6 +7,7 @@ describe("two-step login reducer", () => {
     const state = loginReducer(initialLoginState, {
       type: "password_accepted",
       email: "owner@mbradu.example",
+      remember: true,
     });
 
     expect(state).toMatchObject({ step: "code", email: "owner@mbradu.example" });
@@ -16,6 +17,7 @@ describe("two-step login reducer", () => {
     const state = loginReducer(initialLoginState, {
       type: "password_accepted",
       email: "owner@mbradu.example",
+      remember: true,
     });
 
     expect(state.step).toBe("code");
@@ -46,6 +48,7 @@ describe("two-step login reducer", () => {
     const codeState = loginReducer(initialLoginState, {
       type: "password_accepted",
       email: "owner@mbradu.example",
+      remember: true,
     });
 
     const state = loginReducer(codeState, { type: "code_accepted" });
@@ -57,6 +60,7 @@ describe("two-step login reducer", () => {
     const codeState = loginReducer(initialLoginState, {
       type: "password_accepted",
       email: "owner@mbradu.example",
+      remember: true,
     });
 
     const state = loginReducer(codeState, { type: "code_rejected" });
@@ -73,6 +77,7 @@ describe("two-step login reducer", () => {
       loginReducer(initialLoginState, {
         type: "password_accepted",
         email: "owner@mbradu.example",
+        remember: true,
       }),
       { type: "code_rejected" },
     );
@@ -91,6 +96,7 @@ describe("two-step login reducer", () => {
       loginReducer(initialLoginState, {
         type: "password_accepted",
         email: "owner@mbradu.example",
+        remember: true,
       }),
       { type: "code_rejected" },
     );
@@ -98,5 +104,19 @@ describe("two-step login reducer", () => {
     const state = loginReducer(rejected, { type: "start_over" });
 
     expect(state).toEqual(initialLoginState);
+  });
+
+  it("carries the Remember me choice through a rejected code and a resend", () => {
+    const codeState = loginReducer(initialLoginState, {
+      type: "password_accepted",
+      email: "owner@mbradu.example",
+      remember: false,
+    });
+    const rejected = loginReducer(codeState, { type: "code_rejected" });
+    const resent = loginReducer(rejected, { type: "code_resent" });
+
+    expect(codeState).toMatchObject({ remember: false });
+    expect(rejected).toMatchObject({ remember: false });
+    expect(resent).toMatchObject({ remember: false });
   });
 });

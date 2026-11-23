@@ -1728,6 +1728,31 @@ table.tbl tr:last-child td {
   box-shadow: var(--sh-sm);
   padding: 28px;
 }
+/* Login: "Remember me" on the left, "Forgot password?" on the right. */
+.auth-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.remember-me {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.remember-me input[type="checkbox"] {
+  accent-color: var(--primary);
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: none;
+}
 .auth-foot {
   text-align: center;
   margin-top: 18px;

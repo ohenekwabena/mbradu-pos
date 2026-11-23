@@ -5,6 +5,11 @@ import { redirect } from "next/navigation";
 
 import { sendLoginCode } from "@/lib/auth/login-code";
 import { loginReducer, type LoginState } from "@/lib/auth/login-flow";
+import {
+  forgetDevice,
+  isDeviceTrusted,
+  trustDevice,
+} from "@/lib/auth/trusted-device-cookie";
 import { isProfileDeactivated } from "@/lib/staff";
 import { createClient } from "@/lib/supabase/server";
 
@@ -75,7 +80,7 @@ export async function authenticate(
 
     const code = String(formData.get("code") ?? "").trim();
     const supabase = await createClient();
-    const { error } = await supabase.auth.verifyOtp({
+    const { data, error } = await supabase.auth.verifyOtp({
       email: prevState.email,
       token: code,
       type: "email",
@@ -83,6 +88,11 @@ export async function authenticate(
 
     if (error) {
       return loginReducer(prevState, { type: "code_rejected" });
+    }
+
+    // "Remember me for 30 days" — skip the code on this browser until it lapses.
+    if (prevState.remember && data.user) {
+      await trustDevice(data.user.id);
     }
 
     // Session established — land on the authenticated shell.
@@ -94,6 +104,7 @@ export async function authenticate(
     .trim()
     .toLowerCase();
   const password = String(formData.get("password") ?? "");
+  const remember = formData.get("remember") === "on";
 
   const credentials = await validateCredentials(email, password);
   if (!credentials) {
@@ -107,6 +118,30 @@ export async function authenticate(
     return loginReducer(prevState, { type: "account_deactivated" });
   }
 
+  if (remember) {
+    // This browser verified a code for this user within the last 30 days, so
+    // the password alone is enough: sign in for real (session cookies written).
+    if (await isDeviceTrusted(credentials.userId)) {
+      const supabase = await createClient();
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (error) {
+        return loginReducer(prevState, { type: "password_rejected" });
+      }
+      redirect("/dashboard");
+    }
+  } else {
+    // Unticked (e.g. a borrowed device) — always ask for the code, and drop any
+    // trust this browser was holding for the account.
+    await forgetDevice(credentials.userId);
+  }
+
   await emailOneTimeCode(email);
-  return loginReducer(prevState, { type: "password_accepted", email });
+  return loginReducer(prevState, {
+    type: "password_accepted",
+    email,
+    remember,
+  });
 }

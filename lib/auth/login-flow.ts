@@ -1,10 +1,17 @@
 export type LoginState =
   | { step: "password"; error?: string }
-  | { step: "code"; email: string; error?: string; notice?: string }
+  | {
+      step: "code";
+      email: string;
+      /** "Remember me for 30 days" as ticked on the password step. */
+      remember: boolean;
+      error?: string;
+      notice?: string;
+    }
   | { step: "authenticated" };
 
 export type LoginEvent =
-  | { type: "password_accepted"; email: string }
+  | { type: "password_accepted"; email: string; remember: boolean }
   | { type: "password_rejected" }
   | { type: "code_accepted" }
   | { type: "code_rejected" }
@@ -20,6 +27,7 @@ export function loginReducer(state: LoginState, event: LoginEvent): LoginState {
       return {
         step: "code",
         email: event.email,
+        remember: event.remember,
         notice: "We emailed you a one-time code. Enter it below to finish signing in.",
       };
     case "password_rejected":
@@ -37,6 +45,7 @@ export function loginReducer(state: LoginState, event: LoginEvent): LoginState {
       return {
         step: "code",
         email: state.email,
+        remember: state.remember,
         error: "That code is invalid or expired. Request a fresh code and try again.",
       };
     case "code_resent":
@@ -44,6 +53,7 @@ export function loginReducer(state: LoginState, event: LoginEvent): LoginState {
       return {
         step: "code",
         email: state.email,
+        remember: state.remember,
         notice: "We sent a fresh code to your email.",
       };
     case "start_over":
